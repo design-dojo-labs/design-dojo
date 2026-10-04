@@ -1,0 +1,188 @@
+{
+  "id": "expense-management",
+  "title": "Corporate Expense Approvals",
+  "summary": "File expense reports, validate them against policy, route them through an amount-based approval route, and track them to reimbursement with a full audit trail.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "topics": [
+    "state-transitions",
+    "rules-and-policies",
+    "access-control"
+  ],
+  "estimatedMinutes": 60,
+  "statement": "A 300-person company wants to replace emailed spreadsheets for expense claims. Employees file expense reports, managers and finance approve them, and finance marks them reimbursed. You are writing the core workflow.\n\n**Organisation**\nEvery employee has an id, a name and — except the CEO — a manager. One employee is designated the finance approver.\n\n**Reports and policy**\nAn employee creates a report and adds line items. Each item has a category (travel, lodging, meals or other), an amount, a date and whether a receipt is attached. Items can be added or removed only while the report is a draft or after it has been rejected. On submission the report is checked against company policy; every violation is reported at once and the report stays as it was:\n- a report needs at least one item;\n- a meals item may not exceed ₹2,000;\n- any item over ₹500 needs a receipt;\n- item dates may not be in the future.\n\n**Approval route**\nThe route is fixed at submission, from the report total:\n- up to ₹10,000: the submitter's manager;\n- over ₹10,000 and up to ₹50,000: the manager, then the manager's manager;\n- over ₹50,000: the manager, the manager's manager, then the finance approver.\n\nLevels that do not exist are skipped, a person appears at most once in a route (first occurrence kept), and nobody approves their own report. If the route would be empty, the finance approver approves.\n\nApprovers act in route order; only the current approver may approve or reject. A rejection needs a reason and returns the report to the employee, who may edit it and resubmit (the route is recalculated). An employee may withdraw a report while it is waiting for approval, which returns it to draft.\n\n**Reimbursement**\nWhen the last approver approves, the report is approved. The finance approver can then mark it reimbursed; a reimbursed report is final.\n\n**Visibility**\nApprovers can list the reports waiting for them. Anyone can see a report's status, whom it is waiting on and its history: every submission, approval, rejection, withdrawal and reimbursement, with who did it and when.\n\nFinance expects to tune thresholds and add policy rules (for example monthly limits per category) over time.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Set up employees with an id, a name and an optional manager (who must already exist), and designate one employee as the finance approver.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Create a report for an employee and add or remove items (category, amount greater than zero, date, receipt flag). Editing is allowed only when the report is a draft or rejected; otherwise it is refused.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Submit a report: check every policy rule from the statement and, if any fail, refuse the submission listing all violations (each naming the offending item) while the report keeps its status.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "On successful submission compute the approval route from the total using the three tiers, skipping missing levels, keeping each person once, excluding the submitter, and falling back to the finance approver when the route would be empty.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Approve or reject: only the current approver of a submitted report may act. Approval moves to the next approver or, after the last one, makes the report approved. Rejection requires a non-blank reason and makes the report rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "Enforce the lifecycle: draft → submitted → approved → reimbursed; submitted → rejected → (edit) → submitted; submitted → draft by the submitter withdrawing. Any other transition is refused with an error and changes nothing.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-7",
+      "text": "Mark an approved report reimbursed; only the finance approver may do so, and only for approved reports.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-8",
+      "text": "List the reports waiting on a given approver, oldest submission first; show a report's status, current approver and full history (action, actor, time, and the reason for rejections).",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library; JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no database, email, network or frameworks.",
+    "Amounts are integer paise: ₹500 = 50,000; ₹2,000 = 200,000; ₹10,000 = 1,000,000; ₹50,000 = 5,000,000 paise.",
+    "The current date/time (for future-date checks and history) must come from a source tests can control.",
+    "Up to 1,000 employees and 100,000 reports, each with at most 50 items."
+  ],
+  "assumptions": [
+    "The organisation chart has no cycles and does not change while reports are being processed.",
+    "The finance approver is not the CEO and has a manager.",
+    "All amounts are in one currency (INR).",
+    "Callers identify themselves by employee id; there is no authentication."
+  ],
+  "examples": [
+    {
+      "title": "Small report, single approver",
+      "scenario": "Org: Meera (CEO), Raj (manager Meera), Anita (manager Raj), Dev (manager Anita), Farah (finance approver, manager Meera). Dev submits a report: meals ₹1,500 with receipt, travel ₹6,000 with receipt. Anita approves. Farah marks it reimbursed.",
+      "expected": "Total ₹7,500 → route [Anita]. After Anita approves, the report is approved; after Farah acts it is reimbursed. History: submitted (Dev), approved (Anita), reimbursed (Farah), in that order."
+    },
+    {
+      "title": "Rejection and resubmission",
+      "scenario": "Dev submits lodging ₹24,000 and travel ₹8,000, both with receipts. Raj tries to approve. Anita approves. Raj rejects with reason \"Hotel charged twice\". Dev changes lodging to ₹16,000 and resubmits.",
+      "expected": "Total ₹32,000 → route [Anita, Raj]. Raj's first attempt is refused (Anita is the current approver). After Anita approves, the report waits on Raj. Raj's rejection makes it rejected with the reason. Resubmitted, the total is ₹24,000 → route [Anita, Raj], waiting on Anita."
+    },
+    {
+      "title": "Routes for senior staff",
+      "scenario": "Anita submits a report totalling ₹60,000; Raj submits one totalling ₹60,000; Meera submits one totalling ₹3,000.",
+      "expected": "Anita: [Raj, Meera, Farah]. Raj: [Meera, Farah] — Meera has no manager, so that level is skipped. Meera: the route would be empty, so it is [Farah]."
+    },
+    {
+      "title": "Policy violations",
+      "scenario": "Today is 2026-07-15. Dev submits a report with a meals item of ₹2,500 with receipt and an 'other' item of ₹600 without receipt dated 2026-07-16.",
+      "expected": "Submission is refused with three violations: the meals item exceeds ₹2,000; the ₹600 item has no receipt; the ₹600 item is dated in the future. The report stays a draft."
+    }
+  ],
+  "edgeCases": [
+    "A total of exactly ₹10,000 gets the one-level route; ₹10,000.01 gets two levels.",
+    "An item of exactly ₹500 without a receipt is allowed; a meals item of exactly ₹2,000 is allowed.",
+    "A submitter whose manager's manager is the finance approver, with a total over ₹50,000: the finance approver appears only once.",
+    "The finance approver submits their own report over ₹50,000: they are left out of their own route.",
+    "Approving as someone who is not the current approver, or approving a report that is not waiting for approval, is refused.",
+    "Rejecting with a blank reason is refused.",
+    "Withdrawing an approved report, editing a submitted report, or reimbursing a report that is not approved is refused."
+  ],
+  "outOfScope": [
+    "Paying employees or bank integration.",
+    "Storing receipt images or reading them automatically.",
+    "Email or chat notifications to approvers.",
+    "Multiple currencies.",
+    "Persistence, REST APIs or any UI."
+  ],
+  "concurrency": {
+    "required": false,
+    "notes": "Not assessed. The workflow may assume one request at a time from a single thread."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "The four worked examples produce exactly the stated routes, statuses, refusals and history entries.",
+      "requirementIds": [
+        "FR-1",
+        "FR-3",
+        "FR-4",
+        "FR-5",
+        "FR-6"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "Route tiers switch exactly at ₹10,000 and ₹50,000 (inclusive upper bounds), with missing levels skipped, duplicates removed, the submitter excluded and the empty-route fallback applied.",
+      "requirementIds": [
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "All policy violations are reported together, each identifying its item, and a refused submission leaves the report editable with its previous status.",
+      "requirementIds": [
+        "FR-3",
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "Every transition not listed in the lifecycle (e.g. withdraw after approval, edit while submitted, approve twice) is refused without changing the report or its history.",
+      "requirementIds": [
+        "FR-6",
+        "FR-2",
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Only the finance approver can mark a report reimbursed, and only once it is approved.",
+      "requirementIds": [
+        "FR-7"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "An approver's waiting list contains exactly the reports whose current approver they are, oldest submission first, and history records actor, time and rejection reasons.",
+      "requirementIds": [
+        "FR-8"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Let an approver delegate their approvals to another employee for a date range."
+    },
+    {
+      "id": "SG-2",
+      "text": "Escalate a report to the current approver’s manager if it has waited more than 3 days."
+    },
+    {
+      "id": "SG-3",
+      "text": "Enforce a monthly limit per category across all of an employee's reports."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-3 to FR-6 dominate: all policy violations reported together, the route computed from the total with skips, de-duplication and self-exclusion, strict route order, and only legal status transitions. Check the four examples and the tier boundaries.",
+    "modeling": "Look for separate homes for the org structure, policy checks, route calculation and the report's lifecycle. A report should own its status and history; route calculation should not be buried inside the approve action.",
+    "principles": "Status changes should happen only through intention-revealing operations that check actor and current status in one place, and items must not be editable from outside once submitted. Concurrency is not assessed.",
+    "extensibility": "The statement makes new policy rules, changed thresholds and route tweaks (delegation, escalation) plausible. Adding a policy rule should not touch the approval flow. Concrete code with clearly expressed rules is fine; a generic workflow engine is not expected.",
+    "readability": "Thresholds should be named constants, money handled consistently in paise, and violation messages specific enough to show to employees.",
+    "edge_cases": "Check tier and policy boundaries, missing managers, de-duplication, self-approval exclusion, blank rejection reasons, actions by the wrong person and illegal transitions.",
+    "tests": "Expect tests for each policy rule, each route tier including skip, de-duplication and empty-route cases, out-of-order approval, reject-and-resubmit, and reimbursement gating."
+  }
+}

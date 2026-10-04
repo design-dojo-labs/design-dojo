@@ -1,0 +1,84 @@
+{
+  "id": "e-commerce-checkout",
+  "title": "E-Commerce Checkout and Flash Sales",
+  "summary": "Design cart and checkout for a large online retailer: hold stock, take payment through an external provider and create orders consistently — including flash sales that must never oversell.",
+  "difficulty": "hard",
+  "targets": [
+    "sde2",
+    "senior"
+  ],
+  "domain": "commerce",
+  "estimatedMinutes": 80,
+  "statement": "You are designing **cart and checkout for a large online retailer** that sells its own stock from regional warehouses.\n\n**Shoppers**\n- Add items to a cart from any device (the cart follows them once they log in; guests have carts too), change quantities and remove items.\n- Check out: choose an address, see the final price including discounts, tax and delivery fee, pay, and get an order confirmation.\n- Pay by card (sometimes with an extra bank verification step on another page that can take a few minutes), by wallet, or by bank transfer that is confirmed later.\n- See hints such as \"only 3 left\" on product pages, and are told before paying if an item has run out.\n\n**Flash sales**\n- Several times a month the retailer runs a flash sale, e.g. 10,000 units of a new phone at a big discount starting at exactly 12:00. Hundreds of thousands of shoppers are waiting on the page and press \"Buy\" within the first minute. Each shopper may buy at most 1 unit.\n\n**Clarifications from the interviewer**\n- A pricing/promotions component that computes a cart's final price and an external payment provider already exist. The provider confirms some payments only later through a webhook, and sometimes times out without saying whether the charge happened.\n- Once a shopper starts paying, their items are held for 10 minutes; if payment doesn't complete in time, the items go back on sale.\n- After payment, the order is handed to fulfilment (out of scope) through an event.\n- A shopper who sees \"payment failed\" must not have been charged — or must be refunded automatically.\n\nCover requirements, estimates, APIs, data model and architecture, then dive deep into keeping stock, payments and orders consistent, and into surviving a flash sale.",
+  "scaleHints": [
+    "20M DAU; ~1M orders/day on normal days (~12/s on average, ~100/s at evening and sale peaks)",
+    "~50M cart operations per day (~600/s on average)",
+    "Flash sale: ~2M shoppers on the page and ~500K buy attempts in the first 60 s for 10,000 units of one product (~8K attempts/s on a single item)",
+    "50M products stocked across 200 warehouses",
+    "Checkout API p99 under 1 s excluding time at the payment provider; provider calls take up to 3 s and occasionally time out",
+    "Orders retained 7 years for tax purposes (~2 KB per order)"
+  ],
+  "constraints": [
+    "Never sell more units than are available, including during flash sales",
+    "Never charge a shopper twice for one order; every successful charge ends as an order or an automatic refund",
+    "Card details are never stored by the retailer (the payment provider tokenises them)",
+    "Checkout availability target 99.99%; flash-sale traffic must not take checkout down for regular shoppers"
+  ],
+  "outOfScope": [
+    "Product search, catalogue browsing and recommendations",
+    "Fulfilment, shipping and returns after the order is placed",
+    "Pricing/promotions engine and tax calculation internals (given dependencies)",
+    "Fraud scoring models and third-party seller features"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Cart CRUD for guests and logged-in users, merging carts on login",
+      "Checkout: validate the cart, price it via the pricing service, reserve inventory with a 10-minute hold",
+      "Payment initiation and confirmation (synchronous and webhook-based) with idempotency",
+      "Order creation and state machine (pending payment → paid → sent to fulfilment / cancelled / refunded)",
+      "Release holds on timeout or failure; automatic refund when payment succeeds but the order cannot be completed",
+      "Flash-sale purchase with a per-user limit and fair, non-overselling allocation"
+    ],
+    "keyNonFunctionalRequirements": [
+      "Correctness first: no overselling, no double charge, eventual consistency across services backed by reconciliation",
+      "Checkout p99 < 1 s excluding provider latency; 99.99% availability",
+      "Absorb ~8K attempts/s on a single SKU without collapsing shared databases",
+      "Isolation between flash-sale traffic and normal checkout",
+      "Auditability and 7-year retention of orders and payment records"
+    ],
+    "coreEntities": [
+      "Cart: cart_id, user_id/guest_id, items (sku, qty), updated_at",
+      "Inventory: sku, warehouse_id, on_hand, reserved, version",
+      "Reservation: reservation_id, order_id, sku, qty, status (held/committed/released), expires_at",
+      "Order: order_id, user_id, items, amounts, status, idempotency_key, created_at, version",
+      "Payment: payment_id, order_id, provider_ref, amount, status (initiated/authorized/captured/failed/unknown/refunded), idempotency_key",
+      "Outbox event: event_id, aggregate_id, type, payload, published_at",
+      "FlashSale: sale_id, sku, total_units, per_user_limit, start_at; purchase claims per user"
+    ],
+    "keyComponents": [
+      "Cart service backed by a fast per-user store",
+      "Checkout orchestrator (saga) coordinating reservation, payment and order creation with compensations",
+      "Inventory service with atomic conditional decrements and expiring holds",
+      "Order service owning the order state machine and publishing events through a transactional outbox",
+      "Payment service using idempotency keys with the provider, plus webhook handling and status polling",
+      "Reconciliation job comparing provider settlement reports with internal payments and orders",
+      "Flash-sale admission layer (virtual waiting room / purchase tokens capped at stock) in front of checkout",
+      "Hold-expiry worker that releases reserved stock"
+    ],
+    "deepDiveTopics": [
+      "Inventory holds: row locks vs atomic conditional updates vs pre-split stock buckets for a hot SKU; when to reserve",
+      "Saga with compensations instead of distributed transactions; payment that succeeds after the hold expired",
+      "Idempotent payments: idempotency keys, unknown outcomes after timeouts, webhooks plus polling, reconciliation",
+      "Flash-sale traffic shaping: waiting room, issuing exactly N purchase tokens, per-user limits, protecting downstream services",
+      "Transactional outbox for reliably publishing 'order paid' to fulfilment"
+    ],
+    "commonPitfalls": [
+      "Two-phase commit across inventory, payment and order services",
+      "Decrementing stock only after payment (oversell) or at add-to-cart (stock hoarding)",
+      "Treating a provider timeout as a failure and letting the shopper pay again",
+      "Retrying payment calls without idempotency keys",
+      "Letting every flash-sale attempt hit the inventory database row directly",
+      "No reconciliation between provider records and internal state"
+    ]
+  }
+}

@@ -1,0 +1,189 @@
+{
+  "id": "configurable-logger",
+  "title": "Configurable Logging Library",
+  "summary": "Build a small logging library with hierarchical logger names, inherited levels, multiple sinks with their own thresholds and formats, propagation control and text configuration.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "topics": [
+    "logging"
+  ],
+  "estimatedMinutes": 60,
+  "statement": "Your team's services print debugging output with System.out, which cannot be filtered or redirected. You are writing a small logging library that application code can use instead. Third-party logging libraries and java.util.logging may not be used.\n\n**Loggers and levels**\n- Application code asks for a logger by a dotted name such as \"app.db.pool\". Asking for the same name again gives the same logger, so configuration applies to everyone using that name.\n- Names form a hierarchy: \"app.db\" is the parent of \"app.db.pool\", \"app\" the parent of \"app.db\", and the root logger is the ancestor of every logger.\n- Levels from lowest to highest: DEBUG, INFO, WARN, ERROR, FATAL.\n- A logger may have its own level. Otherwise it uses the level of its nearest ancestor that has one; the root's level is INFO unless configured. Changing or clearing a level takes effect immediately for every logger that inherits it.\n- A message is logged only if its level is at least the logger's effective level.\n\n**Sinks**\n- Output goes to sinks of three kinds: console (standard output), file (lines appended to a path) and memory (keeps formatted lines in order so tests and tools can read them).\n- Each sink has a minimum level and a line format. A sink receives a message only if the message level is at least the sink's level.\n- Sinks are attached to loggers. A message logged on a logger goes to that logger's sinks and then to its ancestors' sinks, up to the root — unless a logger on the way has propagation turned off, in which case loggers above it receive nothing. A sink attached at several points along the path receives the message only once.\n\n**Formatting**\n- A format is a template with the placeholders {timestamp}, {level}, {logger}, {thread} and {message}, for example \"{timestamp} [{level}] {logger} - {message}\". Timestamps are ISO-8601 in UTC with milliseconds.\n- A message may contain \"{}\" markers that are replaced by the arguments in order. Extra arguments are ignored; markers without an argument stay as \"{}\". Null messages and arguments print as \"null\".\n- A message may carry an exception; its type and message are appended on the following line.\n\n**Robustness and configuration**\n- Logging never throws to the caller. If a sink fails (for example the file is not writable), the other sinks still receive the message and the failure is reported once on standard error.\n- Besides configuring in code, the library can be configured from properties-style text. Invalid text is rejected as a whole, listing every problem with its line number, and the previous configuration stays in effect.\n\nConfiguration text has one setting per line; blank lines and lines starting with # are ignored. Settings: sink.NAME.type (console, file or memory), sink.NAME.level, sink.NAME.format, sink.NAME.path (file sinks only, required for them), logger.NAME.level, logger.NAME.sinks (comma-separated sink names) and logger.NAME.propagate (true or false). The root logger is named \"root\".\n\nTeams have asked for JSON output and a network sink in the future.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Obtain a logger by dotted name; the same name always refers to the same logger and its configuration. Names with empty segments (e.g. \"app..db\", \".app\", \"\") are rejected. The root logger is available by the name \"root\".",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Set and clear a logger's level. A logger's effective level is its own level, else the nearest ancestor's, else the root's (default INFO); changes are visible immediately to every inheriting logger, including loggers created before the change.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Log at each level with optional arguments and exception. A message is processed only if its level is at least the logger's effective level, and reaches a sink only if its level is also at least that sink's level.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Provide console, file (append) and memory sinks, each with its own minimum level and format; a memory sink exposes the formatted lines it has received, in order.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Attach sinks to loggers and control propagation: a message goes to the logger's sinks and its ancestors' sinks up to the root, stopping above any logger with propagation off; each sink receives a given message at most once.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "Format lines from the template placeholders {timestamp} (ISO-8601 UTC with milliseconds), {level}, {logger}, {thread} and {message}, substituting \"{}\" markers with arguments as described in the statement.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-7",
+      "text": "Append an attached exception's type and message on the line after the formatted message.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-8",
+      "text": "Isolate sink failures: logging never throws to the caller, other sinks still receive the message, and each failing sink is reported once on standard error.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-9",
+      "text": "Load configuration from properties-style text in the format given; reject it as a whole when any line is invalid (unknown key, unknown level, undefined sink, file sink without path), listing every problem with its line number and keeping the previous configuration.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library, without java.util.logging or third-party logging libraries; JUnit 5 may be used for tests.",
+    "Single JVM process; the only I/O allowed is writing to standard output, standard error and the files of file sinks.",
+    "Timestamps must come from a clock that tests can fix, so formatted lines are deterministic.",
+    "Up to 10,000 distinct logger names; a disabled log call must not format its message."
+  ],
+  "assumptions": [
+    "Single-threaded use is sufficient for this exercise.",
+    "Configuration is replaced as a whole, at startup or later; partial updates through text are not required.",
+    "Log files do not need rotation or size limits."
+  ],
+  "examples": [
+    {
+      "title": "Inherited DEBUG level",
+      "scenario": "Configuration text: \"sink.console.type=console\", \"sink.console.level=WARN\", \"sink.console.format=[{level}] {logger}: {message}\", \"sink.mem.type=memory\", \"sink.mem.level=DEBUG\", \"sink.mem.format={level}|{message}\", \"sink.webmem.type=memory\", \"sink.webmem.level=INFO\", \"sink.webmem.format={message}\", \"logger.root.sinks=console\", \"logger.app.sinks=mem\", \"logger.app.db.level=DEBUG\", \"logger.app.web.sinks=webmem\", \"logger.app.web.propagate=false\" (one per line). Logger \"app.db.pool\" logs DEBUG \"Acquired connection {}\" with argument 7.",
+      "expected": "app.db.pool inherits DEBUG from app.db. mem receives \"DEBUG|Acquired connection 7\"; console receives nothing (its level is WARN)."
+    },
+    {
+      "title": "Logger and sink thresholds",
+      "scenario": "Same configuration. Logger \"app.service\" logs DEBUG \"cache miss\", then WARN \"Slow call {} ms to {}\" with arguments 1200 and \"pricing\".",
+      "expected": "The DEBUG message is dropped (app.service inherits INFO from root). The WARN message reaches mem as \"WARN|Slow call 1200 ms to pricing\" and console as \"[WARN] app.service: Slow call 1200 ms to pricing\"."
+    },
+    {
+      "title": "Propagation turned off",
+      "scenario": "Same configuration. Logger \"app.web.api\" logs ERROR \"Boom\".",
+      "expected": "webmem receives \"Boom\". Because app.web does not propagate, neither mem nor console receives anything."
+    },
+    {
+      "title": "Changing a level at runtime",
+      "scenario": "Same configuration. The level of \"app\" is set to ERROR. Then \"app.service\" logs WARN \"x\" and \"app.db.pool\" logs DEBUG \"y\".",
+      "expected": "\"x\" is dropped (app.service now inherits ERROR from app). \"y\" still reaches mem as \"DEBUG|y\" because app.db's own DEBUG level applies."
+    }
+  ],
+  "edgeCases": [
+    "Logger names with empty segments (\"app..db\", \".app\", \"\") are rejected.",
+    "More \"{}\" markers than arguments, or more arguments than markers.",
+    "The same sink attached to \"app\" and to the root: a message from \"app.x\" appears in it once.",
+    "Clearing an explicit level makes the logger inherit again.",
+    "A file sink whose path is not writable: other sinks still get the message, the caller sees no exception, and the error is reported once.",
+    "Configuration referring to an undefined sink, an unknown level such as VERBOSE, or a file sink without a path: rejected with line numbers, previous configuration kept.",
+    "A logger obtained before its parent was ever configured still inherits the parent’s level once it is set."
+  ],
+  "outOfScope": [
+    "Log rotation, retention and compression.",
+    "Asynchronous or remote log shipping.",
+    "JSON or other structured output formats.",
+    "Integration with existing logging facades or frameworks.",
+    "Guarantees for logging from multiple threads at once."
+  ],
+  "concurrency": {
+    "required": false,
+    "notes": "Not assessed. The library may assume single-threaded use; thread-safe logging is a stretch goal."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "With a fixed clock, the four worked examples produce exactly the stated lines in each sink and nothing else.",
+      "requirementIds": [
+        "FR-2",
+        "FR-3",
+        "FR-4",
+        "FR-5",
+        "FR-6",
+        "FR-9"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "Invalid logger names are rejected, and the same name always returns a logger whose configuration is shared.",
+      "requirementIds": [
+        "FR-1"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "Setting and clearing levels on ancestors changes the effective level of existing descendants immediately.",
+      "requirementIds": [
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "A sink attached at two points of a logger’s ancestry receives each message once; propagation off stops delivery above that logger.",
+      "requirementIds": [
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Marker/argument mismatches, null messages and exceptions are formatted as specified.",
+      "requirementIds": [
+        "FR-6",
+        "FR-7"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "A failing sink never causes the logging call to throw and does not stop other sinks; invalid configuration text is rejected atomically with line numbers.",
+      "requirementIds": [
+        "FR-8",
+        "FR-9"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Make logging safe from many threads at once, guaranteeing that lines from different threads never interleave within a line."
+    },
+    {
+      "id": "SG-2",
+      "text": "Add a JSON line format as an alternative to templates."
+    },
+    {
+      "id": "SG-3",
+      "text": "Rotate a file sink when it exceeds a size limit, keeping the last N files."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2, FR-3, FR-5 and FR-6 are central: effective-level inheritance (including clearing), both logger and sink thresholds, propagation with the stop flag and once-per-sink delivery, and exact formatting. The worked examples should produce identical lines.",
+    "modeling": "Look for clear responsibilities: the registry and hierarchy of loggers, per-logger settings, sinks (destination, threshold and format) and message formatting. Formatting should not be duplicated inside each sink kind.",
+    "principles": "The application-facing API should be small and hide hierarchy internals; sinks should be independent so a failing one cannot affect others. Concurrency is not assessed (thread safety is a stretch goal).",
+    "extensibility": "The statement names likely changes: new output formats (JSON) and new destinations (network). Adding a sink kind or format should not touch logger or level logic. Simple concrete code is fine; do not credit speculative layers.",
+    "readability": "Levels should be an ordered concept rather than compared as strings, and configuration parsing should be separate from the runtime logging path.",
+    "edge_cases": "Check malformed names, argument/marker mismatches, null messages, duplicate sink attachment, failing sinks and invalid configuration rejected as a whole with line numbers.",
+    "tests": "Tests should mostly use memory sinks and a fixed clock to assert exact lines, covering inheritance, propagation stop, de-duplication, runtime level changes and configuration errors."
+  }
+}

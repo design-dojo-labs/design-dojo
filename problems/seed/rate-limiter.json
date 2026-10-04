@@ -1,0 +1,173 @@
+{
+  "id": "rate-limiter",
+  "title": "Per-Client Rate Limiter",
+  "summary": "Decide per client whether each request may proceed under fixed-window or token-bucket policies, with exact limits under heavy concurrent load and accurate retry-after hints.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "topics": [
+    "concurrency",
+    "rules-and-policies",
+    "access-control"
+  ],
+  "estimatedMinutes": 60,
+  "statement": "Your company's public API is being hammered by a few heavy clients, starving everyone else. Before a request reaches business logic, it must pass an in-process rate limiter that decides — per client — whether to let it through.\n\n**Policies**\nTwo kinds of policy are needed:\n- **Fixed window** — at most L requests per window of W milliseconds. Windows are aligned to multiples of W since the epoch (with W = 60,000, windows start at :00 of each minute), and the count starts again in each new window.\n- **Token bucket** — a bucket holds at most C tokens and starts full. Tokens are added continuously at R tokens per P milliseconds — fractions accumulate — but never beyond C. A request needs whole tokens.\n\nOperators define named policies (for example \"free\": fixed window, 100 per minute; \"pro\": token bucket, capacity 50, refilling 10 per second) and assign clients to them. Clients without an assignment use a default policy. Moving a client to another policy takes effect from its next request, starting with fresh state under the new policy.\n\n**Decisions**\n- For each request the limiter receives a client id and an optional cost — the number of permits the request needs, 1 by default, never more than the policy's limit or capacity.\n- It answers allowed or denied. An allowed request consumes its cost; a denied request consumes nothing.\n- An allowed answer includes how many permits the client has left (requests left in the window, or whole tokens left in the bucket).\n- A denied answer says how long the client should wait before the same request could be allowed: until the next window starts, or until enough tokens will have accumulated.\n- Clients never affect each other's limits.\n\n**Concurrency**\nThe limiter is called by every request-handling thread at once, often for the same hot client. Limits must hold exactly under that load — a client limited to 100 per window never gets 101 requests through — and calls for different clients should not queue behind one another.\n\nThe current time must come from a source tests can control. Further algorithms (for example a sliding window) are already on the roadmap.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Define named policies — fixed window (L ≥ 1, W ≥ 1 ms) or token bucket (C ≥ 1, R ≥ 1 tokens per P ≥ 1 ms) — designate a default policy, and assign clients to policies. Invalid parameters and unknown policy names are rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Decide a request for a client: allowed or denied. Allowed answers consume the cost and report permits left; denied answers consume nothing and report the wait in milliseconds before the same request could be allowed. One client's requests never change another client's decisions.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Fixed window: windows are [k × W, (k + 1) × W); at most L permits are allowed per client per window; a request at the exact window start belongs to the new window; a denial waits until the next window starts.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Token bucket: starts full at C tokens, refills continuously at R per P ms without losing fractional tokens and never exceeds C; a request is allowed only if at least cost whole tokens are available; a denial waits until enough tokens will have accumulated (rounded up to the next millisecond).",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Decisions are safe under concurrent calls for the same and different clients, with the guarantees given in the concurrency notes.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "Requests may carry a cost from 1 up to the policy's L or C; a cost outside that range is rejected as invalid (an error, not a denial) and consumes nothing.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-7",
+      "text": "Reassigning a client to another policy takes effect from the client's next request with fresh state under the new policy.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library (java.util.concurrent is allowed); JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no external store or network.",
+    "Time is in milliseconds from a controllable source and never goes backwards.",
+    "Up to 100,000 active clients; each decision should take O(1) time.",
+    "Refilling 3 tokens per 1,000 ms must yield exactly 3 tokens after 1,000 ms, however many requests arrived in between."
+  ],
+  "assumptions": [
+    "Client ids are non-empty strings supplied by a trusted caller.",
+    "Policies are defined before traffic starts; client assignments may change at any time.",
+    "Memory for idle clients is not a concern for this exercise."
+  ],
+  "examples": [
+    {
+      "title": "Fixed window",
+      "scenario": "Policy: fixed window, L = 3, W = 1,000 ms. Client c1 sends requests at t = 950, 960, 970, 980, 1,000, 1,001, 1,002 and 1,003 ms.",
+      "expected": "950, 960 and 970 are allowed (2, 1, 0 left). 980 is denied with a wait of 20 ms. 1,000, 1,001 and 1,002 are allowed — a new window [1,000, 2,000) has started. 1,003 is denied with a wait of 997 ms. Six requests passed between t = 950 and t = 1,002, which is expected for fixed windows."
+    },
+    {
+      "title": "Token bucket",
+      "scenario": "Policy: token bucket, C = 5, refilling 1 token per 200 ms. Client c2 sends 6 requests at t = 0, one at t = 100, one at t = 200, then 5 at t = 1,000.",
+      "expected": "At t = 0 the first 5 are allowed and the 6th is denied with a wait of 200 ms. At t = 100 the request is denied (0.5 tokens) with a wait of 100 ms. At t = 200 it is allowed (1 token had accrued, 0 left). At t = 1,000 the bucket holds 4 tokens: 4 requests are allowed and the 5th is denied with a wait of 200 ms."
+    },
+    {
+      "title": "Requests with a cost",
+      "scenario": "Token bucket, C = 10, refilling 10 tokens per 1,000 ms. At t = 0 client c3 sends cost 7, then cost 5; at t = 200 cost 5; then cost 11.",
+      "expected": "Cost 7 is allowed (3 left). Cost 5 is denied with a wait of 200 ms. At t = 200 the bucket holds 5, so cost 5 is allowed (0 left). Cost 11 is rejected as invalid because it exceeds the capacity."
+    },
+    {
+      "title": "Hot client under contention",
+      "scenario": "Fixed window, L = 100, W = 60,000 ms, time frozen at t = 5,000. 32 threads together send 1,000 requests for client \"hot\" while another thread sends 50 for client \"calm\".",
+      "expected": "Exactly 100 \"hot\" requests are allowed and 900 denied; all 50 \"calm\" requests are allowed."
+    }
+  ],
+  "edgeCases": [
+    "A request exactly at a window boundary belongs to the new window.",
+    "A token bucket idle for an hour holds exactly C tokens, not more.",
+    "Fractional refill: with 3 tokens per 1,000 ms, after 500 ms there are 1.5 tokens, so one request is allowed and 0.5 tokens remain.",
+    "A cost of 0, a negative cost, or a cost above the limit/capacity is an invalid request, not a denial.",
+    "A client with no assignment uses the default policy.",
+    "A client is reassigned in the middle of a window: its next request starts fresh under the new policy.",
+    "Many requests share the same millisecond."
+  ],
+  "outOfScope": [
+    "Rate limiting shared across processes or machines.",
+    "HTTP integration such as status codes and headers.",
+    "Persisting counters across restarts.",
+    "Loading policies from files or remote configuration.",
+    "Long-term quotas and billing."
+  ],
+  "concurrency": {
+    "required": true,
+    "notes": "Must be thread-safe: decisions for the same and different clients, policy assignment and reads may all run concurrently. Guarantees: (1) for a fixed-window client, allowed permits in one window never exceed L, and N concurrent unit-cost requests in a fresh window get exactly min(L, N) allowed; (2) for a token-bucket client, allowed cost over any interval never exceeds C plus the tokens refilled in that interval; (3) a denied request consumes nothing, and permits are never consumed twice or lost under contention; (4) a request racing with a reassignment is decided entirely under either the old or the new policy. Should: requests for different clients do not all serialise on one shared bottleneck."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "With a controlled clock, the fixed-window example produces exactly the stated allow/deny decisions, permits left and waits (20 ms, 997 ms).",
+      "requirementIds": [
+        "FR-2",
+        "FR-3"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "The token-bucket example produces exactly the stated decisions and waits (200 ms, 100 ms, 200 ms), and an idle bucket never exceeds its capacity.",
+      "requirementIds": [
+        "FR-2",
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "Costs are honoured as in the cost example; an out-of-range cost is an error that consumes nothing.",
+      "requirementIds": [
+        "FR-6",
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "The contention example passes repeatedly: exactly 100 allowed for \"hot\" and all 50 allowed for \"calm\".",
+      "requirementIds": [
+        "FR-5",
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Unassigned clients use the default policy, invalid policy parameters are rejected, and reassignment starts the client fresh under the new policy.",
+      "requirementIds": [
+        "FR-1",
+        "FR-7"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Add a sliding-window policy that never allows more than L permits in any W-millisecond span."
+    },
+    {
+      "id": "SG-2",
+      "text": "Discard state for clients idle longer than 10 minutes without changing any decision the limiter would make."
+    },
+    {
+      "id": "SG-3",
+      "text": "Add a global limit shared by all clients that must also allow a request, in addition to the client’s own policy."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2 to FR-4 carry the weight: window alignment and reset, continuous refill without drift, exact wait values and denied requests consuming nothing. The worked numbers (waits of 20/997 ms and 200/100/200 ms) should be reproduced exactly.",
+    "modeling": "Look for a clear split between policy definitions (parameters), per-client state, client-to-policy assignment and the decision result. The two algorithms should sit side by side without a large type-switch threaded through the decision path.",
+    "principles": "Per-client state should change only inside the decision operation, keeping check-and-consume atomic. Concurrency is required: check-then-act races between reading and consuming permits, or lost updates when creating per-client state, are serious defects whatever mechanism is used.",
+    "extensibility": "The statement anticipates further algorithms (sliding window) and runtime reassignment. Adding an algorithm should not change client lookup or the concurrency handling. Do not reward speculative layers beyond that seam.",
+    "readability": "Time arithmetic (window start, refill amount, wait) should live in small, named computations instead of being repeated inline.",
+    "edge_cases": "Check boundary instants, invalid costs vs denials, refill capped at capacity, fractional refill, unknown clients and reassignment mid-window.",
+    "tests": "Expect deterministic tests with a controllable clock for both algorithms plus a concurrent test asserting the exact allowed count for a hot client while another client is unaffected."
+  }
+}

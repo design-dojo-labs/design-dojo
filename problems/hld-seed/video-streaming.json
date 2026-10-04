@@ -1,0 +1,84 @@
+{
+  "id": "video-streaming",
+  "title": "On-Demand Video Streaming Platform",
+  "summary": "Design a video platform where creators upload long videos that are processed into multiple qualities and streamed smoothly to millions of concurrent viewers on any network.",
+  "difficulty": "hard",
+  "targets": [
+    "sde2",
+    "senior"
+  ],
+  "domain": "media-streaming",
+  "estimatedMinutes": 80,
+  "statement": "You are designing **an on-demand video platform** — think of a mid-sized competitor to the big video sites. Creators upload videos; viewers watch them on phones, laptops and smart TVs.\n\n**Creators**\n- Upload videos of up to 20 GB and 4 hours, often over home or mobile connections. If the connection drops halfway, the upload should continue where it stopped instead of starting over.\n- Add a title, description and thumbnail, and choose public, unlisted or private visibility.\n- Follow processing progress and see each video's view count.\n\n**Viewers**\n- Open a video page and start watching within a couple of seconds.\n- Get the best quality their screen and network can sustain, from 240p up to 4K. Quality adapts automatically when the network changes (e.g. walking from Wi-Fi onto a train) instead of stalling.\n- Seek anywhere in the video and resume on another device where they left off.\n\n**Clarifications from the interviewer**\n- A newly uploaded video should become watchable at up to 720p quickly; 1080p and 4K versions can follow later.\n- Popularity is extremely skewed: a small fraction of videos gets most of the views, and most videos are rarely watched after their first week.\n- Viewers are concentrated in North America, Europe, India and Southeast Asia, each with its own evening peak.\n- Delivery bandwidth is the biggest line item in the budget, followed by storage.\n- Private videos must not be playable by someone who merely obtains a media URL from another user.\n\nCover requirements, estimates, APIs, data model and architecture for both the upload/processing path and the playback path, then go deep on the hardest parts.",
+  "scaleHints": [
+    "100M DAU watching ~40 minutes a day → ~2.8M concurrent streams on average, ~6M at peak",
+    "Average delivered bitrate ~3 Mbps → peak egress of roughly 18 Tbps",
+    "100K new uploads per day, averaging 8 minutes and ~600 MB per source file (~60 TB/day of originals)",
+    "95% of videos up to 20 minutes long must be playable at 720p within 10 minutes of the upload completing",
+    "Playback start p95 under 2 s; rebuffering under 1% of watch time",
+    "The top 1% of videos receive ~70% of views; the long tail is rarely watched after its first week"
+  ],
+  "constraints": [
+    "Original uploads are kept so videos can be re-encoded for new formats later",
+    "Playback availability 99.95%; uploads and processing may slow down but an acknowledged upload is never lost",
+    "Private and unlisted media require short-lived, per-viewer access",
+    "Storage and bandwidth spend must be justified — hot and cold videos should not be treated the same"
+  ],
+  "outOfScope": [
+    "Live streaming",
+    "Recommendations, search and the home page",
+    "Comments, likes, subscriptions, ads and creator monetisation",
+    "DRM licensing, copyright matching and content moderation"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Resumable, chunked upload of large files plus metadata (title, description, visibility, thumbnail)",
+      "Processing: transcode into a ladder of resolutions/bitrates, generate thumbnails, package for adaptive streaming, report progress",
+      "Playback via manifests and segments with adaptive bitrate and seeking",
+      "Visibility (public/unlisted/private) enforced at playback time",
+      "Watch progress and resume across devices",
+      "Per-video view counts"
+    ],
+    "keyNonFunctionalRequirements": [
+      "~6M concurrent streams and ~18 Tbps peak egress served close to viewers",
+      "Fast start (< 2 s p95) and < 1% rebuffering",
+      "Processing SLO: 720p playable within 10 min for videos ≤ 20 min, with horizontally scalable workers",
+      "Durability of originals and renditions; 99.95% playback availability",
+      "Cost efficiency for ~60 TB/day of new originals and for delivery bandwidth"
+    ],
+    "coreEntities": [
+      "Video: video_id, owner_id, title, description, visibility, status (uploading/processing/ready/failed), duration, created_at",
+      "UploadSession: upload_id, video_id, total_size, received parts/offsets, expires_at",
+      "Rendition: video_id, resolution, bitrate, codec, manifest/segment location, status",
+      "TranscodeTask: task_id, video_id, chunk range, rendition, state, attempts",
+      "WatchProgress: user_id, video_id, position_s, updated_at",
+      "ViewCount: video_id, count (aggregated asynchronously)"
+    ],
+    "keyComponents": [
+      "Upload service issuing resumable, chunked upload sessions straight to object storage (pre-signed URLs)",
+      "Object storage for originals and encoded segments, with lifecycle tiering",
+      "Processing orchestrator that splits videos into chunks and schedules a DAG of transcode/thumbnail/packaging tasks",
+      "Autoscaled transcoding workers consuming a durable job queue, with retries",
+      "Metadata service and database for videos, renditions and status",
+      "Playback service that authorises viewers and returns manifests with signed URLs",
+      "CDN/edge caches with an origin shield delivering segments",
+      "View-event pipeline and watch-progress store"
+    ],
+    "deepDiveTopics": [
+      "Parallel transcoding: splitting on keyframes, per-rendition tasks, stitching, retries, prioritising the 720p rendition",
+      "Adaptive bitrate streaming (HLS/DASH): encoding ladder, segment length trade-offs (startup vs efficiency), manifests",
+      "Edge delivery for head vs long-tail content: hit ratio, origin shield, pre-positioning popular videos, egress cost",
+      "Storage tiering: hot/warm/cold lifecycle, dropping rarely watched high-bitrate renditions or encoding them on demand",
+      "Protecting private videos with short-lived signed URLs/tokens validated at the edge",
+      "View counting at scale: batched events, dedup, approximate real-time counts"
+    ],
+    "commonPitfalls": [
+      "Streaming video bytes through application servers",
+      "Transcoding inside the upload request, or sequentially on one machine",
+      "Serving a single bitrate, so viewers on weak networks stall",
+      "Ignoring the egress estimate and treating delivery as an afterthought",
+      "Updating a database row on every view",
+      "Single-shot uploads with no resume for multi-gigabyte files"
+    ]
+  }
+}

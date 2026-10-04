@@ -1,0 +1,181 @@
+{
+  "id": "vending-machine",
+  "title": "Snack Vending Machine",
+  "summary": "Run a coin-and-note snack machine: accept money, dispense products, pay change from a limited coin stock, refund on cancel, and support a technician maintenance mode.",
+  "difficulty": "easy",
+  "targets": [
+    "beginner",
+    "sde1"
+  ],
+  "topics": [
+    "state-transitions",
+    "inventory",
+    "commerce"
+  ],
+  "estimatedMinutes": 45,
+  "statement": "A college canteen is installing a snack vending machine. You are writing the program that runs it: customers insert coins and notes, choose a product by its slot code, and receive the product and their change. A technician restocks the machine and loads coins for change.\n\n**Money**\n- The machine accepts coins of ₹1, ₹2, ₹5 and ₹10 and notes of ₹20 and ₹50. Anything else is handed straight back.\n- Money inserted during a purchase adds up to a balance shown to the customer.\n- Change is paid only in coins, from the coins the machine holds — including coins inserted during the current purchase. Notes go into a cash box and are never paid out as change.\n- Change is paid by repeatedly taking the largest coin that does not exceed the amount still owed and that the machine still has. If this does not reach the exact change due, the sale does not happen: the customer keeps their balance and can choose another product, insert more money or cancel.\n\n**Buying**\n- Each slot (for example A1, A2, B1) holds one product with a name, a price in whole rupees and up to 10 units.\n- Choosing a slot dispenses one unit only if the slot exists and is not empty, the balance covers the price, and exact change can be paid. After a sale the balance returns to zero.\n- If the balance is too low, the machine says how much more is needed and keeps the balance.\n- Cancelling returns exactly the coins and notes inserted during the current purchase.\n\n**Maintenance**\nA technician can switch the machine into maintenance mode, but only when no purchase is in progress. In maintenance mode customers cannot insert money or choose products. The technician can set a slot's product and price, add units, add coins for change, empty the cash box and view stock and coin counts, then switch back to normal operation.\n\nThe canteen may later add UPI payments and promotional pricing for some slots.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Accept a coin or note during normal operation: ₹1, ₹2, ₹5 and ₹10 coins and ₹20 and ₹50 notes increase the balance and are recorded as part of the current purchase; any other denomination is rejected and reported as returned, leaving the balance unchanged.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Choose a slot: when the slot exists and has stock, the balance covers the price and exact change can be paid, dispense one unit and return the change as a count per coin denomination. The slot's quantity drops by one, the inserted money joins the machine's holdings (coins for change, notes to the cash box) and the balance returns to zero.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "If the balance is below the price, refuse the sale and report how much more is needed; the balance and the money inserted so far are kept.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Compute change with the largest-coin-first rule from the statement, using the machine's coins plus the coins inserted in this purchase. If exact change cannot be reached, refuse the sale with a 'cannot make change' reason: nothing is dispensed and the balance, stock and coin counts are exactly as before.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Cancel the current purchase: return exactly the coins and notes inserted since the last sale or cancel, and reset the balance to zero. Cancelling with nothing inserted returns nothing and is not an error.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "Refuse a selection of an unknown slot code or an empty slot with a clear reason (unknown slot, sold out), keeping the balance.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-7",
+      "text": "Enter and leave maintenance mode. Entering is refused while the balance is above zero. In maintenance mode, inserting money and choosing slots are refused; outside maintenance mode, technician operations are refused.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-8",
+      "text": "In maintenance mode: set a slot's product name and price (price ≥ ₹1), add units (refused if the slot would exceed 10), add coins for change, empty the cash box (reporting the notes removed and their total), and report every slot's product, price and quantity plus the coin counts.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library; JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no hardware drivers, files, network or frameworks.",
+    "All amounts are whole rupees held as integers; the machine never handles fractions of a rupee.",
+    "At most 30 slots; each slot holds at most 10 units; slot codes are a letter followed by a digit."
+  ],
+  "assumptions": [
+    "Only one customer uses the machine at a time.",
+    "Once the program decides to dispense, the physical dispensing always succeeds.",
+    "The technician is trusted; switching to maintenance mode needs no authentication."
+  ],
+  "examples": [
+    {
+      "title": "Buying with change",
+      "scenario": "Slots: A1 Water ₹15 ×2, A2 Chips ₹20 ×1, B1 Juice ₹35 ×0. Coins held: ₹1×5, ₹2×5, ₹5×2, ₹10×2. A customer inserts a ₹20 note and chooses A1.",
+      "expected": "Water is dispensed with change of one ₹5 coin. A1 now has 1 unit, the machine holds ₹5×1 (other coins unchanged), the cash box holds one ₹20 note and the balance is ₹0."
+    },
+    {
+      "title": "Not enough money, then sold out",
+      "scenario": "Continuing: the next customer inserts a ₹10 coin and a ₹5 coin and chooses A2; then inserts another ₹5 coin and chooses A2 again. A third customer inserts ₹20 and chooses A2.",
+      "expected": "First choice refused: ₹5 more needed, balance stays ₹15. Second choice dispenses Chips with no change; A2 now has 0 units and the machine holds ₹10×3 and ₹5×3. The third customer's choice is refused as sold out and their balance stays ₹20."
+    },
+    {
+      "title": "Change cannot be made",
+      "scenario": "A machine holding only one ₹2 coin. A customer inserts a ₹50 note and chooses A1 (₹15), then cancels.",
+      "expected": "Change due is ₹35: no ₹10 or ₹5 coins, one ₹2 coin leaves ₹33 owed, no ₹1 coins — so the sale is refused with \"cannot make change\", nothing is dispensed and the balance stays ₹50. Cancelling returns the ₹50 note and leaves the ₹2 coin in the machine."
+    },
+    {
+      "title": "Change from coins inserted in the same purchase",
+      "scenario": "A machine holding no coins at all. A customer inserts ₹10, ₹5 and ₹5 coins (balance ₹20) and chooses A1 (₹15).",
+      "expected": "Water is dispensed with one ₹5 coin as change (one of the coins just inserted). The machine now holds ₹10×1 and ₹5×1."
+    }
+  ],
+  "edgeCases": [
+    "A ₹100 note or a ₹3 coin is rejected immediately and the balance does not change.",
+    "Choosing a product with a zero balance is refused with the full price as the amount needed.",
+    "Paying the exact price when the machine holds no coins at all succeeds (no change needed).",
+    "The largest-coin-first rule fails even though another combination exists (change ₹6 with one ₹5 and three ₹2 coins): the sale is refused under the required rule.",
+    "Cancelling with nothing inserted returns nothing and does not fail.",
+    "Trying to enter maintenance mode while a customer has a balance is refused.",
+    "Adding units that would take a slot above 10 is refused and the quantity is unchanged."
+  ],
+  "outOfScope": [
+    "UPI, card or any cashless payment.",
+    "Hardware drivers, coin validation sensors or displays.",
+    "Persistence of stock or cash across restarts.",
+    "Sales reports and analytics.",
+    "Several customers using the machine at once."
+  ],
+  "concurrency": {
+    "required": false,
+    "notes": "Not assessed. The machine serves one customer at a time and all operations run on a single thread."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "The \"Buying with change\" and \"Not enough money, then sold out\" examples produce exactly the stated items, change, stock, coin counts and balances.",
+      "requirementIds": [
+        "FR-1",
+        "FR-2",
+        "FR-3",
+        "FR-6"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "When exact change cannot be made, nothing is dispensed and stock, coin counts, cash box and balance are identical to before the selection.",
+      "requirementIds": [
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "Coins inserted in the current purchase can be used as change, as in the last example.",
+      "requirementIds": [
+        "FR-2",
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "Cancel returns exactly the coins and notes inserted (same denominations and counts) and resets the balance; cancelling with nothing inserted returns nothing.",
+      "requirementIds": [
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Invalid denominations, unknown slots and empty slots are refused with distinct reasons and never change the balance.",
+      "requirementIds": [
+        "FR-1",
+        "FR-6"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "Maintenance mode cannot be entered mid-purchase, blocks customer actions while active, and allows restocking up to 10 units, loading coins and emptying the cash box.",
+      "requirementIds": [
+        "FR-7",
+        "FR-8"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Pay change with the fewest coins whenever any combination of the coins held can make the exact amount, instead of the largest-coin-first rule."
+    },
+    {
+      "id": "SG-2",
+      "text": "Let a customer keep the remaining balance after a sale to buy another product, receiving change only when they ask for it."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2, FR-4 and FR-5 carry the weight: a sale dispenses, decrements stock, pays largest-coin-first change and clears the balance together; a refused sale leaves every count untouched; cancel returns the very items inserted. Check all four examples.",
+    "modeling": "Look for clear ownership of slot inventory, coin holdings and change-making, and the current purchase (balance plus inserted items). Normal vs maintenance mode and purchase-in-progress should be explicit, not inferred from scattered flags.",
+    "principles": "Change should be worked out before any holdings are changed, so a failed sale cannot leak coins, and coin and stock counts can never go negative. Concurrency is not assessed (one customer at a time).",
+    "extensibility": "The statement names plausible changes: cashless payment and promotional pricing. Changing how a price or change is computed should not require rewriting the purchase flow. A small, direct design is fine; do not reward speculative layers.",
+    "readability": "Denominations should be named values rather than scattered integers, and the purchase flow should read in the order the statement describes.",
+    "edge_cases": "Check invalid denominations, zero-balance selection, exact payment with no coins held, the largest-coin-first failure case, cancel with nothing inserted, restocking beyond 10 and entering maintenance mid-purchase.",
+    "tests": "Expect tests for a sale with change, insufficient balance, the cannot-make-change refusal leaving state untouched, cancel returning exact items, and maintenance-mode gating."
+  }
+}

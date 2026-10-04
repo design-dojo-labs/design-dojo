@@ -1,0 +1,178 @@
+{
+  "id": "parking-lot",
+  "title": "Multi-Level Parking Lot",
+  "summary": "Admit and release vehicles in a multi-level lot with three spot sizes, issue tickets, and charge an hourly fee per started hour on exit.",
+  "difficulty": "easy",
+  "targets": [
+    "beginner",
+    "sde1"
+  ],
+  "topics": [
+    "resource-allocation",
+    "rules-and-policies"
+  ],
+  "estimatedMinutes": 45,
+  "statement": "A shopping mall runs a parking lot with several levels. The attendant's kiosk at the gates needs a small program that admits vehicles, tells drivers where to park, and charges them when they leave.\n\n**The lot**\n- The lot has one or more levels, numbered from 0. Each level has a fixed number of spots of three sizes: motorcycle, compact and large (any of these counts may be zero).\n- Spots on a level are numbered from 1: first the motorcycle spots, then the compact spots, then the large spots. A level with 1 motorcycle, 1 compact and 1 large spot therefore has spot 1 (motorcycle), spot 2 (compact) and spot 3 (large).\n\n**Which vehicles fit where**\n- A motorcycle fits a motorcycle, compact or large spot.\n- A car fits a compact or large spot.\n- A truck fits only a large spot.\n\n**Choosing a spot**\nAn arriving vehicle gets the *smallest* spot size it fits that is free anywhere in the lot. Among free spots of that size, the lowest level wins, then the lowest spot number. Only when no spot of that size is free on any level does the vehicle get the next size up.\n\n**Tickets and fees**\n- Every admitted vehicle receives a ticket with a unique ticket id, the vehicle's registration number, its level and spot number, and the entry time.\n- At the exit the driver presents the ticket. The program calculates the fee, frees the spot and closes the ticket. A ticket can be used for only one exit.\n- Each vehicle type has an hourly rate set when the lot is configured. Parking is charged per *started* hour with a minimum of one hour: a 60-minute stay costs one hour, a 61-minute stay costs two.\n- The attendant can see how many spots of each size are free on each level, and find where a given vehicle is parked.\n\nThe mall has already said the tariff will change (a daily cap and a night rate are being discussed) and that electric-vehicle charging spots may be added next year.\n\nYour program is driven from a main method and/or automated tests; no screens or gate hardware are involved.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Set up a lot with one or more levels, each with a given number of motorcycle, compact and large spots, and an hourly rate in paise for each vehicle type (motorcycle, car, truck). Spots are identified by level number and spot number, numbered as described in the statement.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Admit a vehicle given its registration number, type and entry time: choose a spot using the fit rules and the allocation order (smallest fitting size anywhere, then lowest level, then lowest spot number), mark it occupied, and return a ticket with a unique ticket id, registration number, level, spot number and entry time.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Refuse admission with an error that states the reason when no free spot fits the vehicle, or when a vehicle with the same registration number is currently parked. A refused admission changes nothing in the lot.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Process an exit given a ticket id and an exit time: compute the fee, free the spot, close the ticket, and return a receipt with the registration number, the parked duration in minutes and the fee. Unknown or already-closed ticket ids are rejected without side effects.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Compute the fee as the vehicle type's hourly rate multiplied by the number of started hours of the stay, with a minimum of one hour (0–60 minutes = 1 hour, 61–120 minutes = 2 hours, and so on). An exit time earlier than the entry time is rejected and the vehicle stays parked.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "Report availability: the number of free spots of each size on each level, and the lot-wide total per size.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-7",
+      "text": "Find a parked vehicle by registration number, returning its level, spot number and ticket id, or a clear 'not parked' result.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library; JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory: no database, files, network calls or frameworks.",
+    "Money is held as integer paise (₹1 = 100 paise); never use floating point for money.",
+    "Times have minute precision and are supplied by the caller with each admission and exit.",
+    "At most 10 levels and 500 spots per level; a single stay never exceeds 7 days."
+  ],
+  "assumptions": [
+    "Registration numbers are non-empty strings that uniquely identify a vehicle.",
+    "The lot layout and hourly rates do not change after setup.",
+    "There is a single entry gate and a single exit gate, and requests are processed one at a time.",
+    "Payment collection happens outside the program; it only reports the fee due."
+  ],
+  "examples": [
+    {
+      "title": "Filling the lot",
+      "scenario": "Lot: level 0 has 1 motorcycle, 1 compact and 1 large spot (spots 1, 2, 3); level 1 has 0 motorcycle, 2 compact and 1 large spot (spots 1, 2, 3). Rates per hour: motorcycle 1000, car 2000, truck 5000 paise. Admit in order: car KA-01 at 09:00, car KA-02 at 09:05, car KA-03 at 09:10, car KA-04 at 09:15, truck KA-05 at 09:20, car KA-06 at 09:25, motorcycle KA-07 at 09:30.",
+      "expected": "KA-01 → level 0 spot 2 (compact). KA-02 → level 1 spot 1. KA-03 → level 1 spot 2. KA-04 → level 0 spot 3 (large, because no compact spot is free anywhere). KA-05 → level 1 spot 3. KA-06 is refused: the only free spot is the motorcycle spot, which a car cannot use. KA-07 → level 0 spot 1. Availability is now zero for every size on both levels."
+    },
+    {
+      "title": "Exit frees a spot for the next car",
+      "scenario": "Continuing the previous example: KA-01 exits at 11:30, then KA-06 arrives again at 11:35.",
+      "expected": "KA-01 parked 150 minutes = 3 started hours, so the fee is 3 × 2000 = 6000 paise. Level 0 spot 2 becomes free and KA-06 is admitted to level 0 spot 2."
+    },
+    {
+      "title": "Fee boundaries and ticket reuse",
+      "scenario": "Continuing: truck KA-05 (entered 09:20) exits at 11:20; motorcycle KA-07 (entered 09:30) exits at 09:30; then KA-05's ticket is presented again.",
+      "expected": "KA-05: exactly 120 minutes = 2 hours → 2 × 5000 = 10000 paise. KA-07: 0 minutes → one-hour minimum → 1000 paise. Presenting KA-05's ticket again is rejected and nothing changes."
+    }
+  ],
+  "edgeCases": [
+    "A motorcycle arrives when every motorcycle spot is taken, a large spot is free on level 0 and a compact spot is free on level 2: it gets the compact spot on level 2 (size is decided before level).",
+    "A stay of exactly 60 minutes is charged one hour; 61 minutes is charged two hours.",
+    "An exit at the same minute as entry is charged the one-hour minimum.",
+    "A ticket id that was never issued, or one that has already been used for an exit.",
+    "A registration number that is already parked arrives again, even declared as a different vehicle type.",
+    "A truck arrives when only motorcycle and compact spots are free: it is refused although the lot is not full.",
+    "An exit time earlier than the entry time."
+  ],
+  "outOfScope": [
+    "Collecting payment (cash, card or UPI) — the program only reports the fee.",
+    "Persistence across restarts, databases or files.",
+    "Display boards, UIs, REST APIs or gate/number-plate hardware.",
+    "Advance reservations of spots.",
+    "Several gates processing vehicles at the same time."
+  ],
+  "concurrency": {
+    "required": false,
+    "notes": "Not assessed. A single gate processes admissions and exits one at a time, so the solution may assume single-threaded use."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "Cars fill compact spots in level order (level 0 before level 1, lower spot numbers first) and only take a large spot once no compact spot is free anywhere, exactly as in the \"Filling the lot\" example.",
+      "requirementIds": [
+        "FR-1",
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "A truck is refused when only motorcycle and compact spots are free, and the refusal leaves availability counts unchanged.",
+      "requirementIds": [
+        "FR-3",
+        "FR-6"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "Admitting a registration number that is already parked is refused; after that vehicle exits, the same registration number can be admitted again.",
+      "requirementIds": [
+        "FR-3",
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "With a car rate of 2000 paise per hour, stays of 0, 60, 61 and 150 minutes are charged 2000, 2000, 4000 and 6000 paise respectively.",
+      "requirementIds": [
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "After an exit the freed spot is immediately available to the next arrival, and presenting the same ticket again is rejected without charging a fee.",
+      "requirementIds": [
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "An exit time earlier than the entry time is rejected and the vehicle remains parked in the same spot.",
+      "requirementIds": [
+        "FR-5",
+        "FR-7"
+      ]
+    },
+    {
+      "id": "AC-7",
+      "text": "Availability per level and size, and lookup by registration number, reflect every admission and exit made so far.",
+      "requirementIds": [
+        "FR-6",
+        "FR-7"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Add a daily cap per vehicle type: no calendar day of a stay is charged more than the cap, without changing how spots are allocated."
+    },
+    {
+      "id": "SG-2",
+      "text": "Add electric-vehicle charging spots that are offered only to vehicles flagged as electric, and that fall back to the normal spot rules when none is free."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2 (size first, then level, then spot number) and FR-5 (started-hour rounding with a one-hour minimum) carry the most weight; check them against the three worked examples. An exit must free the spot and close the ticket together.",
+    "modeling": "Look for clear homes for the lot layout and spot occupancy, the vehicle-to-spot fit rule, the ticket lifecycle and fee calculation. Fee calculation should not be tangled into spot allocation, and gate-facing operations should not need to know level internals.",
+    "principles": "Occupancy and open tickets should change only through admit and exit, so the invariants (one vehicle per spot, one open ticket per registration) are enforced in one place. Concurrency is not assessed for this problem.",
+    "extensibility": "The statement names two likely changes: new tariff rules (daily cap, night rate) and a new spot kind (EV charging). Each should be a local change. A plain fit table and a single fee calculation are perfectly acceptable; do not reward speculative layers beyond that.",
+    "readability": "The allocation order and fee rounding should be readable straight from the code, with named values instead of magic numbers for sizes and rates, and domain logic kept apart from the demo driver.",
+    "edge_cases": "Expect explicit handling of duplicate registrations, no fitting spot for a vehicle type, unknown or reused tickets, exit before entry, and the 60/61-minute boundary, each with a clear error rather than a silent default or null.",
+    "tests": "Good tests cover the allocation fallback order (size before level), fee boundaries at 0, 60 and 61 minutes, refusal when no fitting spot exists, and ticket reuse. A test per worked example is a strong baseline."
+  }
+}

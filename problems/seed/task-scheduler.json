@@ -1,0 +1,197 @@
+{
+  "id": "task-scheduler",
+  "title": "In-Process Task Scheduler",
+  "summary": "Build an in-process scheduler that runs one-off, delayed and fixed-rate recurring tasks on a fixed pool of worker threads, with cancellation, failure isolation and clean shutdown.",
+  "difficulty": "hard",
+  "targets": [
+    "sde2",
+    "senior"
+  ],
+  "topics": [
+    "scheduling",
+    "concurrency"
+  ],
+  "estimatedMinutes": 90,
+  "statement": "Your service needs to run background work inside the process: send a reminder in 10 minutes, refresh a cache every 30 seconds, start a report right now. You are implementing the in-process scheduler that runs such work on a fixed pool of worker threads. The JDK's ready-made scheduling and thread-pool executors may not be used — building that machinery is the exercise.\n\n**Submitting work**\n- **One-off** tasks run as soon as a worker is free.\n- **Delayed** tasks run once, no earlier than a given delay after submission.\n- **Recurring** tasks run at a fixed rate: first after an initial delay, then every period, at the times start, start + period, start + 2 × period, and so on.\n\nEach submission returns a task id.\n\n**Running work**\n- The scheduler has N worker threads (1 ≤ N ≤ 64), fixed at creation. At most N executions run at the same time.\n- A task never starts before its due time. When more tasks are due than workers are free, the earliest due runs first; tasks due at the same time run in submission order.\n- A recurring task never runs concurrently with itself. If an execution overruns its period, the slots that passed meanwhile are skipped, and the next execution happens at the first slot at or after the moment the overrunning execution finished.\n- A task that throws does not kill its worker or shrink the pool; the failure is recorded. A failing recurring task keeps its schedule.\n- A task submitted with an earlier due time than everything already waiting must still start on time, even if every worker is idle waiting for a later task.\n\n**Cancelling and inspecting**\n- Cancelling a task that has not started means it will never run. Cancelling a recurring task stops all its future executions. An execution already in progress is never interrupted; it finishes normally.\n- Cancel reports whether it prevented at least one execution.\n- Callers can query a task's status (scheduled, running, completed, failed or cancelled), how many times it has run, its recorded failures and, for a recurring task, its next due time.\n\n**Shutting down**\nOn shutdown the scheduler stops accepting submissions, cancels everything that has not started, lets running executions finish, and lets the caller wait — with a timeout — until all workers have stopped.\n\nEvery operation may be called from any thread, including from inside a running task. Product teams have already asked for fixed-delay schedules (next run measured from the end of the previous one) and automatic retries.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Create a scheduler with N workers (1–64) and submit one-off, delayed (delay ≥ 0 ms) and recurring (initial delay ≥ 0, period > 0 ms) tasks, each returning a unique task id. Invalid delays or periods are rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Run tasks no earlier than their due time; among due tasks, earliest due time first, then submission order; never more than N executions at once. A newly submitted earlier task starts on time even while workers wait for later ones.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Run recurring tasks at fixed-rate slots (start + k × period) without ever overlapping an execution of the same task; when an execution overruns, skip the missed slots and run at the first slot at or after its finish.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Cancel by task id: a task that has not started never runs; a recurring task has no further executions; an execution in progress completes uninterrupted. Cancel returns true only if it prevented at least one execution; unknown, finished or already-cancelled ids return false.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "An exception thrown by a task is recorded against that task (failed status for one-off and delayed tasks; a failure count for recurring tasks, which keep their schedule) and never stops a worker or reduces the pool.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "Report a task's status (scheduled, running, completed, failed, cancelled), number of executions, recorded failures and, for recurring tasks, the next due time.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-7",
+      "text": "Every operation is safe to call concurrently from any thread, including from inside running tasks, with the guarantees in the concurrency notes.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-8",
+      "text": "Shut down: reject later submissions, cancel all tasks that have not started, let running executions finish, and let callers wait up to a timeout for all workers to stop, reporting whether they did.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-9",
+      "text": "Start due tasks within 50 ms of their due time when a worker is free, and keep idle workers from consuming CPU while nothing is due.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using the standard library; JUnit 5 may be used for tests.",
+    "Not allowed: ScheduledExecutorService, ThreadPoolExecutor or any other ExecutorService implementation, ForkJoinPool, java.util.Timer, or asynchronous CompletableFuture methods. Plain threads, basic synchronisation primitives and concurrent collections are allowed.",
+    "Single JVM process with all state in memory; tasks are ordinary in-process Java code.",
+    "Timing tests may allow ±50 ms of lateness but a task must never start early.",
+    "Must cope with 100,000 waiting tasks without scanning all of them for every dispatch."
+  ],
+  "assumptions": [
+    "Tasks are ordinary Java code; a long-running task may occupy a worker for as long as it runs.",
+    "Due times are measured with a monotonic time source.",
+    "Pending tasks are lost if the process exits."
+  ],
+  "examples": [
+    {
+      "title": "Ordering with a busy pool",
+      "scenario": "Pool of 2. At t = 0 submit, in this order: A (one-off, runs 300 ms), B (delay 100 ms, runs 50 ms), C (delay 100 ms, runs 50 ms), D (one-off, runs 200 ms).",
+      "expected": "A and D start at ≈0. B and C become due at 100 but both workers are busy. When D finishes (≈200) B starts, because it was submitted before C; when B finishes (≈250) C starts. A finishes at ≈300. Start order: A, D, B, C."
+    },
+    {
+      "title": "Recurring task cancelled",
+      "scenario": "Pool of 1. Submit recurring R (initial delay 0, period 100 ms, each run takes 10 ms). Cancel R at t = 250.",
+      "expected": "R starts at ≈0, 100 and 200. Cancel returns true; there is no execution at 300; R is cancelled with 3 executions."
+    },
+    {
+      "title": "Overrunning execution",
+      "scenario": "Pool of 2. Recurring S with period 100 ms whose first execution takes 250 ms and later ones take 10 ms.",
+      "expected": "Executions start at ≈0, then ≈300 (slots 100 and 200 are skipped), then ≈400, ≈500, … S never runs twice at once, even though the second worker is free."
+    },
+    {
+      "title": "Earlier task submitted later",
+      "scenario": "Pool of 1. At t = 0 submit X with delay 5,000 ms. At t = 10 submit Y with delay 100 ms. At t = 20 submit Z with delay 100 ms, and cancel Z at t = 50. Each task runs 10 ms.",
+      "expected": "Y starts at ≈110 rather than waiting behind X. Z never runs and its cancel returns true. X starts at ≈5,000."
+    }
+  ],
+  "edgeCases": [
+    "A delay of 0 behaves like a one-off task.",
+    "A negative delay or a period of 0 is rejected.",
+    "Cancelling an unknown id, a completed task, or the same task twice returns false and does not fail.",
+    "A recurring task cancels itself from inside its own execution: no further executions happen.",
+    "With a pool of 1, a task submits another task from inside its execution: nothing deadlocks and the new task runs after the current one finishes.",
+    "A task throws: the worker survives and later tasks still run with the full pool.",
+    "A submission after shutdown is rejected.",
+    "Many tasks with the same due time on a pool of 1 run strictly in submission order."
+  ],
+  "outOfScope": [
+    "Persisting tasks across restarts.",
+    "Cron expressions and calendar-based schedules.",
+    "Scheduling across processes or machines.",
+    "Task dependencies and workflows.",
+    "Interrupting or killing running tasks."
+  ],
+  "concurrency": {
+    "required": true,
+    "notes": "Must be thread-safe: submit, cancel, status and shutdown may be called concurrently from any thread, including from inside running tasks. Guarantees: (1) never more than N executions at once; (2) a one-off or delayed task runs at most once, and exactly once unless cancelled or shut down before it starts; (3) a recurring task never overlaps itself; (4) cancel racing with a start has exactly one outcome — the execution never starts and cancel returns true, or it runs and cancel returns false for it; (5) no task starts before its due time; (6) an earlier task submitted while workers wait for a later one is not delayed by it; (7) after shutdown completes no worker threads remain. Idle workers must not busy-wait."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "The ordering example yields start order A, D, B, C with B and C starting only when workers free up, and never more than 2 tasks running.",
+      "requirementIds": [
+        "FR-1",
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "Recurring tasks run at fixed-rate slots, skip slots missed during an overrun and never overlap themselves, as in the overrun example.",
+      "requirementIds": [
+        "FR-3"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "Cancel prevents not-yet-started executions and returns true; it returns false for unknown, completed or already-cancelled tasks; a running execution is not interrupted.",
+      "requirementIds": [
+        "FR-4",
+        "FR-6"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "A throwing task is recorded as failed (or counted for recurring tasks) and subsequent tasks still run with all N workers.",
+      "requirementIds": [
+        "FR-5",
+        "FR-6"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "An earlier task submitted after a much later one starts within tolerance of its own due time.",
+      "requirementIds": [
+        "FR-2",
+        "FR-9"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "Under many threads submitting and cancelling concurrently, every one-off task either runs exactly once or is reported cancelled, and cancel results agree with what actually ran.",
+      "requirementIds": [
+        "FR-7",
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-7",
+      "text": "After shutdown, submissions are rejected, pending tasks are cancelled, running executions complete, and waiting for termination reports success once all workers have stopped.",
+      "requirementIds": [
+        "FR-8"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Add fixed-delay recurring tasks, where each execution is due a given delay after the previous one finished."
+    },
+    {
+      "id": "SG-2",
+      "text": "Retry a failing one-off task up to a configured number of times with a delay between attempts."
+    },
+    {
+      "id": "SG-3",
+      "text": "Add priorities that decide the order among tasks that are due at the same time."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2 to FR-4 dominate: never early, earliest-due ordering with submission-order ties, the fixed-rate skip rule without self-overlap, and cancel semantics. Check timing claims against the worked examples within tolerance.",
+    "modeling": "Look for clear responsibilities: the waiting tasks ordered by due time, the worker loop, per-task schedule and status bookkeeping, and the public submit/cancel/status surface. Computing the next due time should be separate from worker mechanics.",
+    "principles": "Task status changes should happen in one place under consistent coordination, so cancel and start cannot both win. Concurrency is the core of this problem: lost wake-ups, busy-waiting, cancel/dispatch races and workers dying on exceptions are serious defects.",
+    "extensibility": "The statement makes new schedule kinds (fixed delay) and retries plausible. A new schedule kind should only change how the next due time is computed. Speculative abstraction beyond that is neither required nor rewarded.",
+    "readability": "Coordination code should be compact and commented where reasoning is subtle (wake-up conditions, shutdown sequence); the worker logic should read as a simple loop.",
+    "edge_cases": "Check invalid delays and periods, cancel of unknown, completed or running tasks, self-cancel from inside a task, submissions from inside tasks, exceptions in tasks and submissions after shutdown.",
+    "tests": "Expect tests that coordinate threads explicitly rather than relying on long sleeps where possible, covering ordering, maximum parallelism, overrun skipping, cancel races and shutdown; flaky timing assertions should be called out."
+  }
+}

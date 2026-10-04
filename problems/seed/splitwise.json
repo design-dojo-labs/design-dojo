@@ -1,0 +1,185 @@
+{
+  "id": "splitwise",
+  "title": "Expense Sharing Among Friends",
+  "summary": "Record shared expenses with equal, exact and percentage splits, net debts between pairs of people, keep group-level balances and let people settle up.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "topics": [
+    "payments-ledger",
+    "rules-and-policies"
+  ],
+  "estimatedMinutes": 60,
+  "statement": "A group of flatmates wants a small library that tracks shared expenses and who owes whom — the core of an app like Splitwise. You are writing the in-memory domain logic; another team will build an app around it later.\n\n**Users and groups**\nUsers are registered with an id and a name. A group (for example \"Goa trip\") has a name and two or more members. Expenses and settlements can be recorded inside a group, or directly between people with no group.\n\n**Expenses**\nAn expense has a description, one payer, a total amount and a list of participants who share it. The payer may or may not be a participant. The split is one of:\n- **Equal** – the total is divided equally. When it does not divide exactly, the leftover paise go one each to participants in the order they were listed.\n- **Exact** – each participant's share is given; the shares must add up exactly to the total.\n- **Percentage** – each participant gets a whole-number percentage; the percentages must add up to 100. Each share is total × percentage / 100 rounded down, and any leftover paise go one each to participants in listed order.\n\nEvery participant other than the payer then owes the payer their share.\n\n**Balances**\nDebts between the same two people are netted: if A owes B ₹300 and B owes A ₹100, the balance shown is \"A owes B ₹200\". A user can see their balance with every other user they have a non-zero balance with. A group shows balances computed only from that group's expenses and settlements; a user's overall balances include everything.\n\n**Settling up**\nA user can record a payment to another user, optionally within a group, to reduce what they owe. A payment larger than what the payer currently owes the payee in that scope (the group, or overall when no group is given) is rejected.\n\n**History**\nUsers can see the expenses and settlements they took part in, oldest first, with each person's share.\n\nThe product team already plans more ways to split (for example by shares such as 2:1:1) and a \"simplify debts\" feature.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Register users with a unique id and a name (a duplicate id is rejected), and create groups with a name and at least two distinct registered members.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Record an expense with a description, a registered payer, a total greater than zero and a non-empty list of distinct registered participants, split equally with leftover paise going one each to participants in listed order.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Record an expense with an exact split: each listed participant has a share of zero or more paise and the shares must add up to the total; otherwise the expense is rejected with the difference reported and nothing is recorded.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Record an expense with a percentage split: whole-number percentages between 0 and 100 that add up to exactly 100; shares are rounded down and leftover paise go one each to participants in listed order. Invalid percentages reject the expense.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Show a user's overall balances: for every other user with a non-zero net balance, who owes whom and how much, with debts in both directions netted into one amount per pair.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "Group scope: an expense or settlement recorded in a group may involve only that group's members (otherwise it is rejected), and a group's balances are computed only from records in that group.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-7",
+      "text": "Record a settlement from one user to another of an amount greater than zero, optionally within a group. It reduces what the payer owes the payee in that scope and is rejected if it exceeds that debt.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-8",
+      "text": "Show a user's history: the expenses and settlements they took part in, oldest first, with the payer, the total and every participant's share.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library; JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no database, files, network or frameworks.",
+    "Amounts are integer paise (₹1 = 100 paise); never use floating point for money. A single expense is at most 10,000,000,000 paise.",
+    "All amounts are in one currency (INR).",
+    "Up to 1,000 users, 100 groups and 100,000 expenses."
+  ],
+  "assumptions": [
+    "Users and groups are never deleted, and group membership does not change after creation.",
+    "Records are kept in the order they are made; that order defines \"oldest first\".",
+    "Callers are trusted; no authentication is needed."
+  ],
+  "examples": [
+    {
+      "title": "Equal split with a leftover paisa",
+      "scenario": "Users Asha, Bala and Chen. Asha pays 100000 paise for dinner, split equally among Asha, Bala and Chen (in that order).",
+      "expected": "Shares: Asha 33334, Bala 33333, Chen 33333. Bala owes Asha 33333 and Chen owes Asha 33333."
+    },
+    {
+      "title": "Exact split and netting",
+      "scenario": "Then Bala pays 50000 for groceries with an exact split: Asha 20000, Bala 10000, Chen 20000.",
+      "expected": "Asha now owes Bala 20000, which nets against Bala's 33333 debt: Bala owes Asha 13333. Chen owes Bala 20000. Chen still owes Asha 33333."
+    },
+    {
+      "title": "Percentage split",
+      "scenario": "Then Chen pays 120000 for a cab with a percentage split: Asha 50, Bala 25, Chen 25.",
+      "expected": "Shares 60000 / 30000 / 30000. Net balances: Asha owes Chen 26667 (60000 − 33333), Bala owes Chen 10000 (30000 − 20000), Bala owes Asha 13333. Asha's view: Bala owes her 13333, she owes Chen 26667."
+    },
+    {
+      "title": "Settling up",
+      "scenario": "Then Bala records a payment of 13333 to Asha, and tries to pay Chen 15000.",
+      "expected": "The Bala–Asha balance becomes zero and disappears from both users' views. The 15000 payment to Chen is rejected because Bala owes Chen only 10000; balances are unchanged."
+    }
+  ],
+  "edgeCases": [
+    "The payer is not a participant (pays on behalf of others): every participant owes the payer their full share.",
+    "The payer is the only participant: the expense is recorded but no balance changes.",
+    "An equal split of 2 paise among 3 participants gives shares 1, 1 and 0.",
+    "A percentage split of 1001 paise at 50/50 gives shares 501 and 500.",
+    "Two debts that net to exactly zero: the pair no longer appears in either balance view.",
+    "A settlement within a group when the debt exists only outside that group is rejected.",
+    "The same user listed twice as a participant, an unknown user, or a total of zero is rejected."
+  ],
+  "outOfScope": [
+    "Multiple currencies and exchange rates.",
+    "Moving real money or integrating with payment providers.",
+    "Reminders, notifications or emails.",
+    "Persistence, REST APIs or any UI.",
+    "Authentication and permissions."
+  ],
+  "concurrency": {
+    "required": false,
+    "notes": "Not assessed. The library may assume calls arrive one at a time from a single thread."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "The four worked examples produce exactly the stated shares and balances, and the net positions of all users always sum to zero.",
+      "requirementIds": [
+        "FR-2",
+        "FR-3",
+        "FR-4",
+        "FR-5",
+        "FR-7"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "An exact split whose shares add up to 49999 for a 50000 total is rejected with a difference of 1 reported, and balances are unchanged.",
+      "requirementIds": [
+        "FR-3"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "Percentages adding up to 99 or 101, or a negative percentage, are rejected; 1001 paise at 50/50 yields 501 and 500.",
+      "requirementIds": [
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "Duplicate user ids, groups with fewer than two members, unknown users, duplicate participants and non-positive totals are rejected without recording anything.",
+      "requirementIds": [
+        "FR-1",
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "An expense in a group involving a non-member is rejected; group balances exclude expenses recorded outside the group while overall balances include them.",
+      "requirementIds": [
+        "FR-6",
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "A user's history lists their expenses and settlements oldest first, with every participant's share.",
+      "requirementIds": [
+        "FR-8"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Simplify debts in a group: produce a list of payments, as few as possible, that settles everyone's group balance."
+    },
+    {
+      "id": "SG-2",
+      "text": "Support a split by shares (for example 2:1:1) with the same leftover-paise rule."
+    },
+    {
+      "id": "SG-3",
+      "text": "Allow an expense to be edited or deleted, with all affected balances updated."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2 to FR-5 carry the weight: check the rounding rules (leftover paise to participants in listed order) and that the four worked examples give the stated net balances. Every user’s net position must always sum to zero across the system.",
+    "modeling": "Expect clear separation between turning a split into shares, the record of expenses and settlements, and deriving and netting balances. Split kinds should not be one long conditional repeated across validation and calculation.",
+    "principles": "Balances should change only by recording an expense or a settlement, so the netting invariant lives in one place, and callers must not be able to alter stored expenses. Concurrency is not assessed.",
+    "extensibility": "The statement makes new split kinds (shares/ratios) and debt simplification plausible; adding a split kind should be a local change, and group vs no-group scope should not fork the balance logic. Simple direct code without speculative abstraction is acceptable.",
+    "readability": "Rounding and netting logic should be easy to find and read; money should be a clearly integer amount rather than doubles, with no unexplained arithmetic.",
+    "edge_cases": "Look for validation of totals, unknown or duplicate participants, exact-split sums, percentage totals, totals smaller than the participant count, zero-net pairs and overpaying settlements.",
+    "tests": "Tests should pin the rounding behaviour with odd totals, all three split kinds, netting in both directions, group vs overall scope and settlement limits."
+  }
+}

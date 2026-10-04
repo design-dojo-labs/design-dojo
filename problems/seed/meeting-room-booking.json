@@ -1,0 +1,173 @@
+{
+  "id": "meeting-room-booking",
+  "title": "Meeting Room Scheduler",
+  "summary": "Book office meeting rooms without overlaps, search for free rooms by capacity and equipment, auto-book the best fit and show free gaps in a day.",
+  "difficulty": "easy",
+  "targets": [
+    "beginner",
+    "sde1"
+  ],
+  "topics": [
+    "booking",
+    "scheduling",
+    "resource-allocation"
+  ],
+  "estimatedMinutes": 45,
+  "statement": "An office of 200 people keeps double-booking its meeting rooms. Facilities wants a small program that books rooms reliably and helps people find a free room that suits their meeting.\n\n**Rooms**\nEach room has a unique name (names are compared ignoring case), a seating capacity and a set of equipment drawn from: projector, whiteboard, video-conferencing.\n\n**Bookings**\n- A booking is for one room on one date, from a start time to an end time, made by an organiser for a number of attendees.\n- Start and end must fall on 15-minute boundaries (10:00, 10:15, …), lie within office hours 08:00–20:00 on that date, and the end must be after the start.\n- The room must seat all attendees (at least 1).\n- A booking may not overlap another booking of the same room. Times are half-open: a meeting ending at 11:00 does not clash with one starting at 11:00.\n- Only the organiser can cancel a booking; the time becomes free immediately.\n\n**Finding rooms**\n- People can search for rooms that are free for a whole time range on a date, seat at least N people and have all the required equipment. Results are ordered by capacity, smallest first, then by name, so small meetings don't take big rooms.\n- People can ask for \"any suitable room\": the program books the first room the search would return, or fails if there is none.\n- For a room and a date, people can see its bookings in start-time order and its free gaps within office hours.\n\nFacilities has mentioned that recurring weekly meetings and new kinds of equipment are likely next.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Add rooms with a unique name (case-insensitive), a capacity from 1 to 100 and a set of equipment (projector, whiteboard, video-conferencing). A duplicate name or invalid capacity is rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Book a named room for a date, start, end, organiser and attendee count. Reject times off 15-minute boundaries, outside 08:00–20:00, or with end not after start; attendee counts below 1 or above capacity; and any overlap with an existing booking of that room (half-open intervals). Success returns a booking id.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Search for rooms free for a whole time range on a date that seat at least N people and have all required equipment, ordered by capacity ascending then name. No matches gives an empty list, not an error.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Book any suitable room: with the same inputs as a search plus an organiser, book the first room the search returns and report which room was booked, or fail with a clear reason when the search is empty.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Cancel a booking by id: only its organiser may cancel; unknown or already-cancelled bookings are rejected. The slot is free for new bookings immediately.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "List a room's bookings for a date in start-time order, with organiser, times and attendee count.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-7",
+      "text": "List a room's free gaps for a date within office hours, in time order, merging adjacent free time into a single gap.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library; JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no database, calendar service, network or frameworks.",
+    "One office in one time zone; times are local times of day with 15-minute granularity.",
+    "Up to 50 rooms and 10,000 bookings."
+  ],
+  "assumptions": [
+    "Organisers are identified by a non-empty name or id and are trusted; there is no authentication.",
+    "Bookings in the past do not need to be rejected, so the program never needs to read the clock.",
+    "Rooms are never removed or changed after being added."
+  ],
+  "examples": [
+    {
+      "title": "Overlap and back-to-back",
+      "scenario": "Rooms: Everest (10 seats; projector, video-conferencing), K2 (4 seats; whiteboard), Nilgiri (6 seats; projector, whiteboard). On 2026-11-02 Alice books K2 10:00–11:00 for 3; Bob books K2 10:30–11:30 for 2; Bob books K2 11:00–12:00 for 2.",
+      "expected": "Alice's booking succeeds. Bob's first request is rejected because it overlaps 10:00–11:00. Bob's second request succeeds: back-to-back bookings are allowed."
+    },
+    {
+      "title": "Searching",
+      "scenario": "On the same date: search 10:15–10:45 for 4 people with no equipment; search 12:00–12:30 for 4 people with no equipment; search 12:00–12:30 for 4 people needing a projector.",
+      "expected": "First search: [Nilgiri, Everest] (K2 is booked). Second: [K2, Nilgiri, Everest]. Third: [Nilgiri, Everest] (K2 has no projector)."
+    },
+    {
+      "title": "Any suitable room",
+      "scenario": "Carol asks for any suitable room on 2026-11-02, 14:00–15:00, for 8 people with video-conferencing. Then Dan asks for any room 14:30–15:30 for 8 people with no equipment.",
+      "expected": "Carol gets Everest. Dan’s request fails: Everest is the only room seating 8 and it is taken from 14:00 to 15:00."
+    },
+    {
+      "title": "Free gaps and cancellation",
+      "scenario": "After the first example, list K2's bookings and free gaps on 2026-11-02. Bob tries to cancel Alice's booking; then Alice cancels it and the free gaps are listed again.",
+      "expected": "Bookings: 10:00–11:00 (Alice), 11:00–12:00 (Bob). Free gaps: 08:00–10:00 and 12:00–20:00. Bob's cancellation is rejected. After Alice cancels, the free gaps are 08:00–11:00 and 12:00–20:00."
+    }
+  ],
+  "edgeCases": [
+    "A booking 19:30–20:15 or 07:45–08:30 crosses office hours and is rejected; 19:45–20:00 is accepted.",
+    "A start time of 10:10 is not on a 15-minute boundary and is rejected.",
+    "A start equal to the end, or an end before the start, is rejected.",
+    "Zero attendees, or more attendees than the room seats, is rejected.",
+    "A booking that exactly fills the gap between two existing bookings is accepted.",
+    "Cancelling an unknown or already-cancelled booking, or cancelling as someone other than the organiser, is rejected.",
+    "Adding a room named \"k2\" when \"K2\" exists is rejected as a duplicate."
+  ],
+  "outOfScope": [
+    "Recurring meetings (see stretch goals).",
+    "Calendar invitations or integration with email/calendar services.",
+    "Authentication and permissions beyond the organiser check.",
+    "Multiple offices or time zones.",
+    "Persistence, REST APIs or any UI."
+  ],
+  "concurrency": {
+    "required": false,
+    "notes": "Not assessed. The program may assume requests arrive one at a time from a single thread."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "Overlapping bookings of the same room are rejected while back-to-back bookings are accepted, exactly as in the first example.",
+      "requirementIds": [
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "Time-rule violations (off-boundary, outside office hours, end not after start) and attendee-count violations are each rejected with a clear reason.",
+      "requirementIds": [
+        "FR-2",
+        "FR-1"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "Searches return exactly the rooms free for the whole range with enough seats and all required equipment, ordered by capacity then name, as in the second example.",
+      "requirementIds": [
+        "FR-3"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "Booking any suitable room books the smallest fitting room and fails with a reason when none fits, as in the third example.",
+      "requirementIds": [
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Only the organiser can cancel; after cancelling, the slot can be booked again and appears in the free gaps.",
+      "requirementIds": [
+        "FR-5",
+        "FR-7"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "A room's bookings for a date are listed in start-time order and its free gaps cover exactly the unbooked part of 08:00–20:00.",
+      "requirementIds": [
+        "FR-6",
+        "FR-7"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Book a meeting weekly for N weeks, all-or-nothing: if any week clashes, nothing is booked and the clashing dates are reported."
+    },
+    {
+      "id": "SG-2",
+      "text": "When a requested room is busy, suggest the earliest free slot of the same length in that room on the same date."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2 to FR-4 are central: half-open overlap detection, time validation and the search ordering (capacity, then name). Verify the four worked examples exactly.",
+    "modeling": "Look for clear separation between room definitions, a room's bookings for a date, and the search/auto-book logic. Overlap checking should live in exactly one place and be reused by booking, search and free-gap computation.",
+    "principles": "Bookings should only be created or removed through validated operations, so a room can never hold overlapping bookings, and the time-slot rules should be enforced once. Concurrency is not assessed.",
+    "extensibility": "Plausible changes named in the statement: recurring meetings and new kinds of equipment. Adding an equipment kind should not require changes to search logic. A direct, simple design is perfectly acceptable; speculative abstraction should not earn credit.",
+    "readability": "Time ranges should be represented clearly rather than as ad-hoc integer pairs with repeated comparisons; search filters should read like the statement.",
+    "edge_cases": "Check boundary handling: back-to-back bookings, office-hour limits, 15-minute alignment, zero or excess attendees, cancellation by non-organisers, duplicate room names and empty search results.",
+    "tests": "Expect tests for overlap (including touching intervals), search ordering, auto-book failure, cancellation permissions and free-gap computation."
+  }
+}

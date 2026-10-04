@@ -1,0 +1,79 @@
+{
+  "id": "pastebin",
+  "title": "Pastebin: Text Snippet Sharing",
+  "summary": "Design a service where people paste text or code, share it through an unguessable link, and optionally have it expire or self-destruct after the first view.",
+  "difficulty": "easy",
+  "targets": [
+    "beginner",
+    "sde1"
+  ],
+  "domain": "storage",
+  "estimatedMinutes": 40,
+  "statement": "You are designing **a paste-sharing service**: developers paste a log excerpt, a config file or a code snippet and share the link in a chat or a bug report.\n\n**Users**\n- *Anonymous users* can create pastes and view any public or unlisted paste whose link they have.\n- *Registered users* can also create private pastes (only they can view them), list their own pastes and delete them.\n\n**Core journeys**\n1. **Create** — submit text (up to 10 MB) with an optional title, a syntax-language hint, a visibility (public, unlisted or private) and an expiry (10 minutes, 1 hour, 1 day, 1 week, 1 month or never). The service returns a short, unguessable link such as `https://paste.example/kq81Lz0w`.\n2. **View** — opening the link shows the paste and its metadata. A \"raw\" link returns only the plain text; scripts and CI jobs fetch raw links a lot.\n3. **Burn after reading** — a paste can be marked so that exactly one person can ever view it; after the first successful view it is gone for everyone.\n4. **Manage** — registered users see a paginated list of their pastes and can delete any of them.\n5. **Recent** — a public page lists the 50 newest public pastes.\n\n**Clarifications from the interviewer**\n- Pastes are immutable once created; there is no editing (people create a new paste instead).\n- Expired or deleted pastes must stop being viewable promptly — within about a minute — even if the underlying storage is cleaned up later.\n- Most pastes are small (median ~5 KB), but a meaningful minority are multi-megabyte log dumps.\n- A paste linked from a busy forum thread or an outage post-mortem can get thousands of views per minute.\n\nCover requirements, estimates, APIs, the data model and the high-level architecture, then dive into the parts you consider most interesting.",
+  "scaleHints": [
+    "5M new pastes per day (~60 creations/s on average, ~300/s at peak)",
+    "Read:write about 10:1 → ~50M views per day (~600/s on average, ~3K/s at peak)",
+    "Average paste 10 KB (median 5 KB, maximum 10 MB) → ~50 GB of new content per day",
+    "About half of all pastes never expire; plan for 3 years of growth (~55 TB of content if nothing expired)",
+    "View latency p99 under 200 ms for pastes up to 1 MB"
+  ],
+  "constraints": [
+    "Links must be unguessable — unlisted pastes are protected only by nobody being able to discover the link",
+    "A burn-after-reading paste must be shown to at most one viewer, even if two people open it at the same moment",
+    "Once the creator has received the link, the paste must not be lost",
+    "Creation must be limited per client to stop abuse (e.g. 100 pastes per hour for anonymous clients)"
+  ],
+  "outOfScope": [
+    "Editing pastes, forks and revision history",
+    "Full-text search across pastes",
+    "Syntax highlighting itself (done in the browser)",
+    "Comments, stars and other social features"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Create a paste with content, optional title, language, visibility and expiry; return a unique link",
+      "View rendered and raw paste by key; enforce visibility for private pastes",
+      "Expiry: expired pastes are never served; physical cleanup happens asynchronously",
+      "Burn after reading with exactly-one-view semantics",
+      "Registered users list (paginated) and delete their pastes",
+      "Recent public pastes list bounded to the newest 50"
+    ],
+    "keyNonFunctionalRequirements": [
+      "Read-heavy (10:1) with ~3K views/s at peak and bursty hot pastes",
+      "Low view latency (p99 < 200 ms for pastes up to 1 MB)",
+      "Durability of acknowledged pastes",
+      "Large 10 MB payloads must not degrade small-paste performance",
+      "Cost-efficient storage over years (~55 TB worst case), e.g. compression and tiering",
+      "Abuse protection through per-client rate and size limits"
+    ],
+    "coreEntities": [
+      "PasteMetadata: paste_key (PK), owner_id, title, language, visibility, size_bytes, content_ref, created_at, expires_at, burn_after_read, status",
+      "PasteContent: immutable blob addressed by content_ref",
+      "User: user_id, email, credentials",
+      "RecentPublic: bounded list of (created_at, paste_key) for the newest public pastes"
+    ],
+    "keyComponents": [
+      "Stateless API/web tier for create, view, raw and list",
+      "Key generation with enough entropy (random keys + collision check, or a pre-generated key pool)",
+      "Metadata store keyed by paste_key with a secondary index on owner_id for listings",
+      "Object/blob storage for paste content, separate from metadata",
+      "Cache for hot pastes (immutability makes caching simple) and edge caching of public raw content",
+      "Expiry: read-time check plus a background cleanup worker",
+      "Rate limiting on paste creation"
+    ],
+    "deepDiveTopics": [
+      "Separating metadata from content: blobs in object storage vs inline rows, and a size threshold for small pastes",
+      "Burn after reading: an atomic state transition (active → burned) before returning content, and keeping caches from serving it",
+      "Expiry: lazy check on read plus background deletion; cache TTLs bounded by expires_at",
+      "Key length and entropy so unlisted and private links cannot be guessed or enumerated",
+      "Serving popular and raw pastes cheaply by caching immutable content, without exposing private pastes"
+    ],
+    "commonPitfalls": [
+      "Storing multi-megabyte bodies in relational rows and loading them for listings",
+      "Relying only on a periodic cleanup job, so expired pastes stay visible for hours",
+      "Read-then-delete for burn after reading, letting two concurrent viewers both see the paste",
+      "Short sequential keys that make unlisted pastes enumerable",
+      "Caching private or burn-after-reading pastes in a shared cache layer"
+    ]
+  }
+}

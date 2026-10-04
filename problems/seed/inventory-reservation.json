@@ -1,0 +1,206 @@
+{
+  "id": "inventory-reservation",
+  "title": "Inventory Reservation for Checkout",
+  "summary": "Reserve stock for checkouts with a time-to-live, confirm or release it, and guarantee no overselling while thousands of checkouts run concurrently.",
+  "difficulty": "hard",
+  "targets": [
+    "sde2",
+    "senior"
+  ],
+  "topics": [
+    "inventory",
+    "concurrency",
+    "commerce",
+    "booking"
+  ],
+  "estimatedMinutes": 90,
+  "statement": "During flash sales an online store sells more units than it has: two shoppers check out the last unit at the same instant and both orders go through. You are building the in-memory stock reservation core that checkout calls, so that overselling becomes impossible.\n\n**Stock**\nEach product variant (SKU) has an on-hand quantity. Units held for checkouts in progress are reserved, and available = on-hand − reserved. Warehouse staff can add stock (restock) and remove damaged stock; a removal may not push on-hand below the quantity currently reserved.\n\n**Checkout flow**\n1. **Reserve** — checkout asks to reserve a list of (SKU, quantity) lines for one cart, together with a checkout key. The reservation succeeds only if every line can be satisfied; otherwise nothing is reserved and the response lists each short SKU with the quantity requested and the quantity available. A cart may take at most 5 units of any SKU, and a SKU may appear only once per request.\n2. A successful reservation gets an id and expires 10 minutes later (configurable).\n3. **Confirm** — after payment succeeds, checkout confirms the reservation and its units leave on-hand stock for good. Confirming at or after expiry fails. Confirming an already confirmed reservation succeeds again without changing stock, because payment notifications are retried.\n4. **Release** — if payment fails or the shopper abandons checkout, the reservation is released and its units become available again.\n5. **Expiry** — a reservation that is neither confirmed nor released by its expiry time releases itself; nobody has to call anything for its units to become available.\n\nCheckout may retry a reserve call with the same checkout key, for example after a timeout. A retry returns the original reservation instead of reserving again.\n\n**Queries**\nCallers can see each SKU's on-hand, reserved and available quantities, and each reservation's status (active, confirmed, released or expired) and lines.\n\n**Concurrency**\nThousands of checkouts call this core at once from many threads. Whatever the interleaving, stock must never be oversold or lost, multi-line reservations must be all-or-nothing, and the core must never deadlock, whatever order the lines are listed in. Activity on unrelated SKUs should not slow other SKUs down.\n\nAll time-dependent behaviour must be testable without waiting in real time. The business is already planning a second warehouse and an option to accept partial reservations.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Register SKUs with an initial on-hand quantity ≥ 0, restock a SKU by a positive quantity, and report a SKU's on-hand, reserved and available quantities. Unknown SKUs are rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Reserve a list of (SKU, quantity) lines with a checkout key, all-or-nothing. Quantities must be 1–5 and SKUs distinct and known (otherwise an invalid-request error). If any line is short, nothing is reserved and every short SKU is reported with requested and available quantities. Success returns a reservation id and expiry time.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Confirm an active reservation before its expiry: its units are removed from on-hand and from reserved, and its status becomes confirmed. Confirming again succeeds without changing stock; confirming at or after expiry, or after release, fails.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Release an active reservation: its units become available and its status becomes released. Releasing an already released or expired reservation changes nothing and says so; releasing a confirmed reservation is rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Expire reservations automatically: from the expiry instant (default 10 minutes after reserving, configurable) an unconfirmed, unreleased reservation counts as expired and its units are available, without any explicit call.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "All operations are safe under concurrent use from many threads, with the guarantees given in the concurrency notes.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-7",
+      "text": "A reserve call with a checkout key that was already used returns the original reservation (whatever its current status) without reserving again; the same key with different lines is rejected as a conflicting retry.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-8",
+      "text": "Remove damaged stock from a SKU: rejected if on-hand would fall below the quantity currently reserved.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-9",
+      "text": "Report a reservation's status (active, confirmed, released or expired), its lines, its checkout key and its expiry time.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library (java.util.concurrent is allowed); JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no database, external coordination service or network.",
+    "Quantities are non-negative integers; up to 100,000 SKUs and at most 20 lines per reservation.",
+    "The current time comes from a source tests can control; second precision.",
+    "Correctness must not depend on a background task running on time: units must be available from the very instant a reservation expires."
+  ],
+  "assumptions": [
+    "There is a single warehouse.",
+    "Payment happens elsewhere; confirm is called only after payment succeeded.",
+    "Each checkout attempt uses its own checkout key; keys are non-empty strings.",
+    "Prices are not involved."
+  ],
+  "examples": [
+    {
+      "title": "Reserving across two SKUs",
+      "scenario": "SKUs: TSHIRT-M with on-hand 10, MUG with on-hand 2. Expiry 10 minutes. At 10:00 checkout K1 reserves 3 TSHIRT-M and 1 MUG.",
+      "expected": "Reservation R1 is active and expires at 10:10. TSHIRT-M: on-hand 10, reserved 3, available 7. MUG: on-hand 2, reserved 1, available 1."
+    },
+    {
+      "title": "All-or-nothing failure",
+      "scenario": "At 10:01 checkout K2 tries to reserve 1 TSHIRT-M and 2 MUG.",
+      "expected": "Rejected: MUG is short (requested 2, available 1). Nothing is reserved; TSHIRT-M available stays 7."
+    },
+    {
+      "title": "Confirm, idempotent confirm, expiry",
+      "scenario": "At 10:05 R1 is confirmed; at 10:06 it is confirmed again. At 10:06 checkout K3 reserves 1 MUG (R3) and nobody confirms it. At 10:16 R3 is confirmed.",
+      "expected": "After the first confirm: TSHIRT-M on-hand 7, reserved 0, available 7; MUG on-hand 1, reserved 0, available 1. The second confirm succeeds with no change. R3 holds the last MUG until 10:16; at 10:16 R3 has expired, its confirm fails, and MUG shows reserved 0, available 1."
+    },
+    {
+      "title": "Last-unit contention and retries",
+      "scenario": "MUG has on-hand 1 and nothing reserved. 100 threads concurrently reserve 1 MUG, each with its own checkout key. Separately, 20 threads concurrently reserve 1 TSHIRT-M with the same checkout key K9.",
+      "expected": "Exactly one MUG reservation succeeds and 99 fail as short. All 20 K9 calls return the same reservation id, and TSHIRT-M reserved increases by exactly 1."
+    }
+  ],
+  "edgeCases": [
+    "A quantity of 0, a negative quantity or more than 5 is an invalid request, not a shortage.",
+    "The same SKU appearing twice in one request is rejected.",
+    "An unknown SKU anywhere in the request rejects the whole request.",
+    "A reservation taking exactly all available units succeeds; the next one fails as short.",
+    "Confirming exactly at the expiry instant fails.",
+    "Releasing after confirm is rejected; releasing twice changes nothing the second time.",
+    "With on-hand 10 and reserved 8, removing 2 damaged units succeeds and removing 3 is rejected.",
+    "A retry with the same checkout key but different lines is rejected as a conflicting retry."
+  ],
+  "outOfScope": [
+    "Multiple warehouses and choosing between them.",
+    "Prices, payments and refunds.",
+    "Persistence and recovery after restarts.",
+    "Coordination across processes or machines.",
+    "Backorders and pre-orders."
+  ],
+  "concurrency": {
+    "required": true,
+    "notes": "Must be thread-safe: reserve, confirm, release, restock, damage removal, expiry and queries may run concurrently. Guarantees: (1) available never goes below zero and confirmed units never exceed units received — N concurrent reservations for the last unit give exactly one success; (2) multi-line reservations are all-or-nothing, and after a failed reservation returns it has reserved nothing; (3) confirm, release and expiry of one reservation resolve to exactly one final outcome, and its units are returned or consumed exactly once; (4) concurrent retries with one checkout key create a single reservation; (5) no deadlock regardless of the order lines are listed in. Should: operations on disjoint SKUs do not block each other."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "The first three examples produce exactly the stated on-hand, reserved and available quantities and statuses after every step.",
+      "requirementIds": [
+        "FR-1",
+        "FR-2",
+        "FR-3",
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "A failed multi-line reservation reports every short SKU with requested and available quantities and leaves all quantities unchanged; invalid quantities, duplicate SKUs and unknown SKUs are rejected as invalid requests.",
+      "requirementIds": [
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "Release returns units for active reservations, is a reported no-op for released or expired ones, and is rejected for confirmed ones.",
+      "requirementIds": [
+        "FR-4",
+        "FR-9"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "100 concurrent reservations of the last unit produce exactly one success, repeatedly.",
+      "requirementIds": [
+        "FR-6",
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Concurrent reservations listing the same two SKUs in opposite orders always complete without deadlock and never oversell either SKU.",
+      "requirementIds": [
+        "FR-6"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "Concurrent confirm and release of the same reservation leave it either confirmed (units consumed) or released (units available), never both.",
+      "requirementIds": [
+        "FR-6",
+        "FR-3",
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-7",
+      "text": "Same-key retries, sequential or concurrent, return one reservation id and reserve once; a same-key retry with different lines is rejected.",
+      "requirementIds": [
+        "FR-7"
+      ]
+    },
+    {
+      "id": "AC-8",
+      "text": "Damaged-stock removal below the reserved quantity is rejected, and restocking increases on-hand and available.",
+      "requirementIds": [
+        "FR-8",
+        "FR-1"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Support several warehouses: each line may be satisfied from any warehouse in a given priority order, still all-or-nothing across the whole request."
+    },
+    {
+      "id": "SG-2",
+      "text": "Let the caller opt into partial reservations that reserve whatever is available per line and report what was reserved."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2 to FR-5 carry the weight: all-or-nothing reserve with an accurate shortage report, idempotent confirm, release rules by status, and expiry at the exact instant without explicit calls. Quantities must match the worked examples after every step.",
+    "modeling": "Look for clear ownership of per-SKU stock counts, reservations with their own lifecycle, idempotency bookkeeping for checkout keys, and the coordinating service. Reservation status changes should live with the reservation.",
+    "principles": "Stock counts should change only through reserve, confirm, release, expire, restock and damage operations that enforce available ≥ 0 in one place. Concurrency is central: check-then-act gaps, inconsistent acquisition order across SKUs, and units returned twice on confirm/expiry races are serious defects.",
+    "extensibility": "The statement names likely changes: a second warehouse and partial reservations; per-cart limits and expiry should be configuration. These should not require rewriting the concurrency core. Simple designs without speculative abstraction are acceptable.",
+    "readability": "The reserve path (validate, check every line, commit) should read clearly; concurrency-critical regions should be small and explained.",
+    "edge_cases": "Check the invalid-request vs shortage distinction, duplicate SKU lines, exact-stock reservations, the expiry boundary, confirm or release after final states, conflicting same-key retries and damage-removal limits.",
+    "tests": "Expect deterministic lifecycle tests with controlled time plus real multi-threaded tests for last-unit contention, same-key retries and opposite SKU orders finishing without deadlock."
+  }
+}

@@ -1,0 +1,184 @@
+{
+  "id": "movie-ticket-booking",
+  "title": "Cinema Seat Booking",
+  "summary": "Schedule shows on screens and let many customers concurrently hold seats with an expiry and confirm bookings, without ever double-booking a seat.",
+  "difficulty": "hard",
+  "targets": [
+    "sde2",
+    "senior"
+  ],
+  "topics": [
+    "booking",
+    "concurrency",
+    "resource-allocation"
+  ],
+  "estimatedMinutes": 90,
+  "statement": "A multiplex wants the booking core behind its box-office terminals and app. Popular shows open for sale at a fixed time and thousands of customers pick seats at the same moment, so seat allocation must stay correct under concurrent use.\n\n**Screens and shows**\n- A screen has a fixed seat layout: rows identified by letters (A, B, …) and seats numbered from 1 within each row. Every seat has a category, such as regular or premium.\n- A show is a movie playing on a screen from a start time to an end time, with a price per seat category. Two shows on the same screen may not overlap; a show may start exactly when the previous one ends.\n\n**Browsing**\nCustomers can list the upcoming shows of a movie, ordered by start time, and see a seat map of a show in which every seat is available, held or booked.\n\n**Holding and booking**\n- A customer picks 1 to 10 seats of one show and asks to hold them. The hold succeeds only if every requested seat is available at that moment; otherwise nothing is held and the response names the seats that were not available.\n- A successful hold returns a hold id, the total price and an expiry time: 5 minutes after the hold by default (configurable).\n- A customer may have at most one active hold per show.\n- Confirming a hold before it expires turns it into a booking with a booking id. Payment is handled elsewhere and has succeeded by the time confirm is called.\n- Once a hold's expiry time is reached, its seats are available to everyone again and the hold can no longer be confirmed. This must happen without anyone explicitly releasing the hold.\n- A customer can release their own hold early, or cancel their own booking before the show starts; the seats become available again.\n- Holds cannot be placed for a show that has already started.\n\n**Concurrency**\nThe booking core is called from many threads at once. It must never double-hold or double-book a seat, never leave seats held after a failed hold, and never deadlock — whatever order customers list their seats in. Requests for different shows should not wait on each other.\n\nAll time-dependent behaviour (hold expiry, show start) must be testable without waiting in real time.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Define screens with a seat layout (rows, seats per row, category per seat) and schedule shows (movie, screen, start, end, price per category in paise). A show whose end is not after its start, or that overlaps another show on the same screen, is rejected; touching shows are allowed.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "List a movie's shows that have not started yet, ordered by start time, and return a show's seat map with each seat's status (available, held or booked).",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Hold 1–10 distinct, existing seats of a show for a customer, all-or-nothing. A failed hold holds nothing and names the unavailable seats. A successful hold returns a hold id, the total price (sum of category prices) and its expiry time. Holds for a started show, and a second active hold by the same customer for the same show, are rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Confirm a hold before its expiry time to create a booking (booking id, seats, total price); its seats become booked. Confirming at or after the expiry time, confirming someone else’s hold, or confirming the same hold twice is rejected and creates no booking.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "When a hold's expiry time is reached, its seats are shown as available and can be held by others, with no explicit release call. The hold duration defaults to 5 minutes and is configurable.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "All holding, confirming, releasing, cancelling and seat-map operations are safe under concurrent use from many threads, with the guarantees given in the concurrency notes.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-7",
+      "text": "A customer can release their own active hold early, and cancel their own booking before the show starts; in both cases the seats become available immediately. Cancelling after the show has started, or acting on another customer’s hold or booking, is rejected.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library (java.util.concurrent is allowed); JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no database, external coordination service or network.",
+    "Prices are integer paise (₹1 = 100 paise).",
+    "Up to 20 screens, each with at most 26 rows of 30 seats, and up to 1,000 shows.",
+    "The current time must come from a source that tests can control; times have second precision."
+  ],
+  "assumptions": [
+    "There is a single cinema; there is no city or cinema search.",
+    "Customers are identified by a non-empty string id; there is no authentication.",
+    "A movie is identified by its title; no other movie metadata is needed."
+  ],
+  "examples": [
+    {
+      "title": "Hold, conflict, confirm",
+      "scenario": "Screen 1 has rows A and B with seats 1–5 each; row A is premium, row B regular. Show S1: \"Inception\" on Screen 1, 18:00–20:45, premium 35000 paise, regular 20000 paise; hold duration 5 minutes. At 17:00 U1 holds A1, A2. At 17:01 U2 asks to hold A2, A3. At 17:04 U1 confirms.",
+      "expected": "U1's hold succeeds: total 70000, expires 17:05. U2's request fails naming A2, and A3 is not held. U1's confirm creates a booking for A1 and A2 totalling 70000; the seat map shows A1 and A2 booked and A3 available."
+    },
+    {
+      "title": "Expiry without a release call",
+      "scenario": "At 17:10 U3 holds B1, B2 and never confirms. At 17:15 U4 asks to hold B2, B3; then U3 tries to confirm.",
+      "expected": "U3's hold succeeds (total 40000, expires 17:15). At 17:15 it has expired, so U4's hold succeeds (B2, B3, total 40000, expires 17:20) and U3's confirm is rejected as expired. B1 shows as available."
+    },
+    {
+      "title": "Contention",
+      "scenario": "Time frozen at 17:30. 50 threads, each for a different customer, simultaneously try to hold B5. Separately, for 1,000 rounds two threads simultaneously request [A4, A5] and [A5, A4] for two different customers; any successful hold is released before the next round.",
+      "expected": "Exactly one of the 50 holds of B5 succeeds; the other 49 fail naming B5. All 1,000 rounds complete (no deadlock) and in every round exactly one of the two requests succeeds."
+    },
+    {
+      "title": "Scheduling around an existing show",
+      "scenario": "Schedule S2 on Screen 1 from 20:00 to 22:30; then from 20:45 to 23:15.",
+      "expected": "The first is rejected because it overlaps S1 (which ends at 20:45). The second is accepted because it starts exactly when S1 ends."
+    }
+  ],
+  "edgeCases": [
+    "A hold request with a duplicated seat (A1, A1) or a seat that does not exist on the screen (C9) is rejected and holds nothing.",
+    "Requests for 0 seats or 11 seats are rejected.",
+    "Confirming exactly at the expiry instant is rejected.",
+    "A customer with an active hold on S1 asks for another hold on S1: rejected; once the first hold expires or is released, a new one is allowed.",
+    "Releasing or confirming a hold that belongs to another customer is rejected.",
+    "Cancelling a booking after the show has started is rejected.",
+    "Holding seats for a show that has already started is rejected."
+  ],
+  "outOfScope": [
+    "Payment processing, refunds and cancellation fees.",
+    "Multiple cinemas, cities or search across them.",
+    "Persistence, REST APIs or any UI.",
+    "Authentication of customers or staff.",
+    "Coordination across several processes or machines."
+  ],
+  "concurrency": {
+    "required": true,
+    "notes": "Must be thread-safe: hold, confirm, release, cancel and seat-map reads may run concurrently from many threads. Guarantees: (1) concurrent holds that share any seat of the same show — at most one succeeds, and N concurrent holds of one free seat give exactly one success; (2) a hold fails only because a requested seat is held or booked by another successful hold or booking, and after a failed hold returns, none of its seats are held for it; (3) a seat is never booked twice, and confirm, release, cancel and expiry of the same hold resolve to exactly one outcome; (4) no deadlock or livelock regardless of seat order in requests; (5) each seat in a seat map shows a status it really had. Should: operations on different shows do not block each other."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "An overlapping hold fails naming the conflicting seat and holds none of the requested seats, as in the first example.",
+      "requirementIds": [
+        "FR-3",
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "With controlled time, a hold confirmed one second before expiry becomes a booking, while a confirm at the expiry instant is rejected and its seats are available to others.",
+      "requirementIds": [
+        "FR-4",
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "50 threads holding the same seat concurrently produce exactly one success, and the seat map shows that seat held.",
+      "requirementIds": [
+        "FR-6",
+        "FR-3"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "Concurrent requests listing the same seats in opposite orders always complete without deadlock, with exactly one success per round.",
+      "requirementIds": [
+        "FR-6"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Racing confirm and release of the same hold leaves exactly one outcome: either a booking exists and the seats are booked, or no booking exists and the seats are available.",
+      "requirementIds": [
+        "FR-6",
+        "FR-4",
+        "FR-7"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "Overlapping shows on a screen are rejected while touching shows are accepted, and a movie’s upcoming shows are listed in start-time order.",
+      "requirementIds": [
+        "FR-1",
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-7",
+      "text": "Cancelling a booking before the show frees its seats; cancelling after the start, or another customer’s booking, is rejected.",
+      "requirementIds": [
+        "FR-7"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Suggest the best N adjacent available seats in a requested category for a show: same row, as close to the row's centre as possible."
+    },
+    {
+      "id": "SG-2",
+      "text": "Reject holds that would leave a single isolated empty seat between taken seats in a row."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-3 to FR-5 carry the weight: all-or-nothing holds, confirm only before expiry, and automatic availability at expiry. Replay the worked examples with controlled time, including a confirm exactly at the expiry instant (rejected).",
+    "modeling": "Look for clear ownership of the fixed layout, per-show seat inventory, holds and bookings. Seat status for a show should have a single authority, and expiry should be a property of the hold rather than scattered timestamp checks.",
+    "principles": "Seat status changes (available → held → booked, held → available) should be enforced in one place. Concurrency is central: check-then-act gaps, inconsistent acquisition order across seats, and seats left held after a failed hold are serious defects, whatever mechanism is chosen.",
+    "extensibility": "Plausible changes: new seat categories and pricing rules, different hold durations, seat-suggestion rules (stretch). These should be local changes. A straightforward design that keeps per-show state isolated is ideal; generic frameworks and speculative abstraction earn no credit.",
+    "readability": "Concurrency-sensitive sections should be small, obvious and commented where the reasoning is subtle; the hold and confirm flows should read top to bottom.",
+    "edge_cases": "Expect explicit errors for unknown or duplicate seats, seat-count limits, actions on another customer’s hold or booking, double confirm, shows already started, and the expiry boundary instant.",
+    "tests": "Beyond functional tests with controlled time, expect at least one real multi-threaded test asserting exactly one winner for a contended seat, and one showing opposite seat orders finish without deadlock."
+  }
+}

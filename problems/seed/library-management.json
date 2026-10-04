@@ -1,0 +1,188 @@
+{
+  "id": "library-management",
+  "title": "Library Lending Desk",
+  "summary": "Lend physical copies to standard and premium members with loan limits, late fines, renewals and a first-come waiting list that reserves returned copies.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "topics": [
+    "inventory",
+    "booking",
+    "rules-and-policies"
+  ],
+  "estimatedMinutes": 60,
+  "statement": "A community library is replacing its paper ledger. Librarians need a program that tracks the catalogue, lends copies to members, accepts returns, manages waiting lists and charges late fines.\n\n**Catalogue**\nA title is identified by its ISBN and has a name and an author. The library owns one or more physical copies of a title, each with a unique barcode.\n\n**Members**\n- Standard members may have up to 3 copies on loan at once, for 14 days each.\n- Premium members may have up to 5 copies on loan at once, for 21 days each.\n- A member who owes ₹100 or more in fines cannot borrow until they pay enough to bring what they owe below ₹100.\n\n**Lending and returns**\n- A member borrows a specific copy by its barcode. The due date is the borrow date plus the member's loan period.\n- A copy returned after its due date costs the member ₹10 for each day late. Returning on the due date costs nothing.\n- A loan can be renewed once, before it is overdue, if nobody is waiting for that title. Renewal extends the due date by the member's loan period.\n- Members can pay off fines, in part or in full.\n\n**Holds (waiting list)**\n- If no copy of a title is on the shelf, a member can place a hold on the title. Holds form a first-come-first-served queue per title. A member cannot hold a title they already have on loan, or hold the same title twice.\n- When a copy of a title with holds is returned, it does not go back on the shelf: it is reserved for the first member in the queue, who can collect it up to and including the third day after the return. Only that member can borrow it during that time.\n- If they do not collect it in time, they lose their place and the copy is reserved for the next member in the queue for the next three days; when nobody is left, it goes back on the shelf.\n\n**Queries**\nLibrarians can search titles by part of the name or author (ignoring case) and see how many copies are on the shelf, and can list a member's loans with due dates and the number of days overdue.\n\nDates are calendar days. All date-dependent behaviour must be testable without waiting for real days to pass. The library's board is already discussing a student membership tier and a cap on fines per loan.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Add titles (unique ISBN, name, author) and copies (unique barcode, belonging to an existing title), and register members (unique id, standard or premium). Duplicates and copies of unknown titles are rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Borrow a copy by barcode on a given date: allowed only if the copy is on the shelf (or reserved for this member), the member is below their loan limit and owes less than 10000 paise. The due date is the borrow date plus 14 or 21 days. Each refusal states its reason.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Return a copy on a given date: close the loan and add a fine of 1000 paise per day after the due date to the member's balance. Returning a copy that is not on loan is rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Place a hold on a title: allowed only when no copy of the title is on the shelf, the member has no copy of it on loan and no existing hold on it. Holds are queued first come, first served, and the member’s queue position is reported.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "When a copy of a title with holds is returned, reserve it for the first member in the queue through the third day after the return date, removing that member from the queue once they borrow it. During the reservation nobody else can borrow that copy.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "An uncollected reservation lapses after its last day: the member loses their place and the copy is reserved for the next member for three more days, repeating as needed, or returns to the shelf if nobody is waiting. The result must be correct whenever the library is next used, even if several reservations lapsed meanwhile.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-7",
+      "text": "Renew a loan once, on or before its due date, if nobody holds the title; the new due date is the old due date plus the member's loan period. Otherwise renewal is refused with a reason.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-8",
+      "text": "Pay fines: an amount greater than zero and at most what the member owes reduces their balance; other amounts are rejected.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-9",
+      "text": "Search titles by a case-insensitive fragment of name or author, showing copies on the shelf per title; list a member's current loans with due dates and days overdue as of a given date.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library; JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no database, files, network or frameworks.",
+    "Fines are integer paise: ₹10 per day = 1000 paise, the borrowing threshold ₹100 = 10000 paise.",
+    "Dates are calendar dates without time of day, supplied by the caller or by a date source that tests control.",
+    "Up to 50,000 titles, 100,000 copies and 10,000 members."
+  ],
+  "assumptions": [
+    "There is a single branch.",
+    "Librarians operate the program on behalf of members; no authentication is needed.",
+    "Copies are never lost or damaged."
+  ],
+  "examples": [
+    {
+      "title": "Lending and queueing",
+      "scenario": "Title \"Clean Code\" with copies C1 and C2. Members M1 (standard), M2 (premium), M3 and M4 (standard). On 2026-03-01: M1 borrows C1, M2 borrows C2, M3 tries to borrow C1, then M3 and M4 place holds on \"Clean Code\".",
+      "expected": "M1's loan is due 2026-03-15 and M2's 2026-03-22. M3's borrow is refused (C1 is on loan). M3 is first in the queue and M4 second."
+    },
+    {
+      "title": "Late return reserves the copy",
+      "scenario": "On 2026-03-18 M1 returns C1. On 2026-03-19 M4 tries to borrow C1, then M3 borrows C1.",
+      "expected": "M1 is fined 3 days × 1000 = 3000 paise. C1 is reserved for M3 through 2026-03-21. M4's attempt is refused (reserved for another member). M3's loan is due 2026-04-02, and M4 is now first in the queue."
+    },
+    {
+      "title": "Reservation lapses",
+      "scenario": "On 2026-03-22 M2 returns C2 (its due date). M4 never collects it. On 2026-03-26 the librarian looks up C2.",
+      "expected": "M2 pays no fine. C2 is reserved for M4 through 2026-03-25. On 2026-03-26 the reservation has lapsed, M4 is no longer in the queue and, with nobody else waiting, C2 is on the shelf."
+    },
+    {
+      "title": "Fine threshold",
+      "scenario": "M1 (owing 3000 paise) later returns another title 8 days late, tries to borrow, pays 2000 paise and tries again.",
+      "expected": "The new fine brings M1 to 11000 paise owed, so the first borrow is refused. After paying 2000 M1 owes 9000 (below 10000) and the second borrow succeeds."
+    }
+  ],
+  "edgeCases": [
+    "Returning on the due date costs nothing; one day later costs 1000 paise.",
+    "A member owing exactly 10000 paise is refused; owing 9999 is allowed.",
+    "A member at their loan limit is refused even when the copy is on the shelf.",
+    "Placing a hold while a copy of the title is on the shelf is refused.",
+    "Three members queue for a title and nobody collects for ten days after a return: the copy passes to each member in turn for three days and is reserved for the right member (or back on the shelf) when next checked.",
+    "Renewing an overdue loan, renewing a second time, or renewing while someone holds the title is refused.",
+    "Paying more than is owed, or a non-positive amount, is rejected."
+  ],
+  "outOfScope": [
+    "Collecting fine payments through a payment provider (payments are only recorded).",
+    "Emails or other notifications to members.",
+    "Multiple branches and transfers between them.",
+    "E-books and digital lending.",
+    "Persistence, REST APIs or any UI."
+  ],
+  "concurrency": {
+    "required": false,
+    "notes": "Not assessed. Librarians use the program one request at a time; single-threaded use may be assumed."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "The worked examples produce exactly the stated due dates, fines, refusals, reservations and queue positions.",
+      "requirementIds": [
+        "FR-1",
+        "FR-2",
+        "FR-3",
+        "FR-4",
+        "FR-5",
+        "FR-6"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "Borrowing is refused, each with a distinct reason, for: copy on loan, copy reserved for someone else, loan limit reached (3 standard, 5 premium), and fines of 10000 paise or more.",
+      "requirementIds": [
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "Fines on return equal 1000 paise per day after the due date and accumulate on the member’s balance; returning a copy that is not on loan is rejected.",
+      "requirementIds": [
+        "FR-3",
+        "FR-8"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "Holds are refused when a copy is on the shelf, when the member already has the title on loan or already holds it, and are served strictly first come, first served.",
+      "requirementIds": [
+        "FR-4",
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Renewal succeeds once for a loan that is not overdue and has no holds, extending the due date by the loan period; all other renewals are refused.",
+      "requirementIds": [
+        "FR-7"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "Search is case-insensitive over name and author with correct on-shelf counts, and a member’s loan list shows days overdue as of the given date.",
+      "requirementIds": [
+        "FR-9"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Cap the fine for a single loan at the replacement cost recorded for the title."
+    },
+    {
+      "id": "SG-2",
+      "text": "Record a \"ready for collection\" message for a member whenever a copy is reserved for them, so tests can check that it was produced."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2, FR-3 and FR-5 matter most: borrow eligibility (limit, fine threshold, reservation), fine arithmetic on return, and reserving returned copies for the head of the queue. Check the worked dates exactly (14/21-day periods, inclusive reservation end).",
+    "modeling": "Expect distinct homes for the catalogue (title vs physical copy), membership rules, loans, the per-title hold queue and fines. Holds belonging to titles while loans belong to copies is the key modelling distinction.",
+    "principles": "A copy's status (on shelf, on loan, reserved) should change only through borrow, return and reservation logic, never set directly by callers; membership rules should live in one place. Concurrency is not assessed.",
+    "extensibility": "The statement makes new membership tiers and different fine rules (caps) plausible; each should be a local change. Simple, concrete code is acceptable; generic rule engines and speculative abstraction are not expected.",
+    "readability": "Date arithmetic should be centralised and readable, and refusal reasons should be explicit values or messages rather than bare booleans.",
+    "edge_cases": "Look for due-date and fine-threshold boundaries, holds when copies are on the shelf, reservations lapsing in a chain down the queue, renewal rules and overpayment.",
+    "tests": "Tests should cover fine boundaries, the queue handing a copy to the right member, lapses to the next member and back to the shelf, renewal refusals and the fine threshold blocking borrowing."
+  }
+}

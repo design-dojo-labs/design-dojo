@@ -1,0 +1,84 @@
+{
+  "id": "metrics-monitoring",
+  "title": "Metrics Monitoring and Alerting",
+  "summary": "Design an internal platform that ingests time-series metrics from every service and host, powers dashboards, and evaluates alert rules that page on-call engineers.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "domain": "analytics",
+  "estimatedMinutes": 60,
+  "statement": "A company with thousands of engineers and hundreds of services wants **its own metrics monitoring and alerting platform**.\n\n**Who uses it**\n- *Services and hosts* emit numeric metrics such as request counts, error counts, latency distributions, CPU and memory, each tagged with labels like `service`, `host`, `region`, `endpoint` and `status_code`.\n- *Engineers* build dashboards with charts such as \"p99 latency of the checkout service by region over the last 6 hours\" or \"error rate per endpoint over the last 30 days\", and explore metrics ad hoc during incidents.\n- *On-call engineers* define alert rules such as \"payments error rate above 2% for 5 minutes\" or \"no data from service X for 10 minutes\". When a rule fires or resolves, the platform calls the company's existing paging system.\n\n**Core journeys**\n1. Ingest metrics continuously; a data point should be queryable within seconds of being sent.\n2. Query metrics by name and tag filters over a time range, with aggregations (sum, avg, max, percentiles) grouped by tags.\n3. Dashboards made of many charts refresh automatically every 30 seconds.\n4. Alert rules are evaluated continuously; alerts fire and resolve, and are not re-sent over and over while they keep firing.\n\n**Clarifications from the interviewer**\n- Recent data is queried far more often than old data; for queries spanning months, minute- or hour-level resolution is fine.\n- Hosts buffer a few minutes of data when they can't reach the platform, so some data arrives late or out of order.\n- Teams occasionally ship a change that adds a tag such as `user_id` or `request_id`, which would create millions of new series overnight.\n- Monitoring matters most during incidents — exactly when the rest of the infrastructure is struggling. If alerting itself stops working, someone must find out.\n\nCover requirements, estimates, APIs, data model and architecture, then dive deep into storage, querying and alert evaluation.",
+  "scaleHints": [
+    "20K hosts/containers × ~500 series each → ~10M active time series",
+    "Each series reports every 10 s → ~1M data points/s ingested",
+    "~16 bytes per raw point (~1.4 TB/day uncompressed); good time-series encodings get close to 2 bytes per point",
+    "Retention: 10 s resolution for 15 days, 1-minute rollups for 90 days, 1-hour rollups for 2 years",
+    "~5K engineers; ~2K dashboard queries/s at peak; p95 under 1 s for 24-hour queries over up to 1,000 series",
+    "~50K alert rules evaluated every 30–60 s; an alert must fire within 1 minute of its condition being met"
+  ],
+  "constraints": [
+    "Ingestion and alerting availability of 99.95% — higher than most of the services being monitored",
+    "Data points up to 5 minutes late must still be accepted",
+    "Per-team cardinality limits must protect the platform from runaway tag values",
+    "Notifications must be deduplicated, and flapping conditions must not page repeatedly"
+  ],
+  "outOfScope": [
+    "Logs and distributed tracing",
+    "The paging/on-call escalation product (an existing paging API is given)",
+    "Anomaly detection and forecasting",
+    "Collecting OS-level stats on hosts (agents already exist)"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Ingest tagged counters, gauges and histograms in batches from agents and services",
+      "Query API: metric name + tag filters + time range + aggregation/group-by + step",
+      "Dashboards with saved queries and auto-refresh",
+      "Alert rules (threshold over a window, no-data) with pending/firing/resolved states and notifications via the paging API",
+      "Downsampling/rollups and tiered retention",
+      "Validation and cardinality limits at ingestion"
+    ],
+    "keyNonFunctionalRequirements": [
+      "~1M points/s ingest, horizontally scalable and replicated",
+      "Queryable within seconds; dashboard p95 < 1 s for 24 h over 1,000 series",
+      "Alert latency < 1 min, with alerting isolated from heavy dashboard queries",
+      "99.95% availability plus monitoring of the monitoring platform itself",
+      "Storage efficiency through compression and rollups"
+    ],
+    "coreEntities": [
+      "Series: series_id (hash of metric name + sorted tags), metric_name, tags, first_seen, last_seen",
+      "Chunk: series_id, block start time, compressed (timestamp, value) pairs",
+      "Rollup: series_id, resolution, time bucket, min/max/sum/count",
+      "Tag index: (tag key, value) → set of series_ids",
+      "AlertRule: rule_id, query, condition, for_duration, severity, notification target, owner",
+      "AlertState: rule_id, label set, state, since, last_notified_at",
+      "Dashboard: dashboard_id, owner, panels (queries, layout)"
+    ],
+    "keyComponents": [
+      "Ingestion gateway that validates, enforces cardinality limits and batches writes",
+      "Durable ingestion buffer/log decoupling producers from storage",
+      "Time-series storage nodes partitioned by series id, with in-memory head blocks, compression and replication",
+      "Inverted tag index resolving tag filters to series ids",
+      "Downsampling/compaction jobs producing rollups and moving old data to cheaper storage",
+      "Query service that fans out to shards, merges and aggregates, with result caching",
+      "Alert evaluator (scheduler + state machine) with notification dedup towards the paging API",
+      "Meta-monitoring watchdog that alerts when ingestion or alerting is unhealthy"
+    ],
+    "deepDiveTopics": [
+      "Storage layout: per-series chunks, delta-of-delta timestamps and XOR value compression, in-memory head vs immutable blocks",
+      "Cardinality explosions: detection, per-team limits, rejecting or dropping offending tags",
+      "Sharding and replicating ingestion and storage; accepting late and out-of-order points",
+      "Query execution: shard fan-out, picking rollup resolution by time range, caching dashboard queries",
+      "Alert evaluation: querying storage vs streaming evaluation, 'for' windows, hysteresis, no-data alerts, isolation from dashboards"
+    ],
+    "commonPitfalls": [
+      "Storing each data point as a row in a relational database",
+      "No downsampling or retention tiers, so long-range queries scan billions of raw points",
+      "Unbounded tag cardinality with no guardrails",
+      "Running alert evaluation through the same overloaded query path as dashboards",
+      "A single alert evaluator with no failover and no meta-monitoring",
+      "Ignoring late and out-of-order data"
+    ]
+  }
+}

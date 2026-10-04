@@ -1,0 +1,181 @@
+{
+  "id": "elevator-system",
+  "title": "Elevator Bank Controller",
+  "summary": "Simulate a bank of elevators step by step: dispatch hall calls to the right car, serve car calls in travel order, turn around correctly and handle maintenance.",
+  "difficulty": "hard",
+  "targets": [
+    "sde2",
+    "senior"
+  ],
+  "topics": [
+    "scheduling",
+    "state-transitions",
+    "resource-allocation"
+  ],
+  "estimatedMinutes": 90,
+  "statement": "An office building is replacing the controller of its elevator bank. You are writing the controller logic as a deterministic simulation that tests can drive one step at a time.\n\n**Building and requests**\n- The building has F floors numbered 0 to F−1 and N elevators numbered 1 to N. Each elevator starts idle with doors closed at a configured floor (floor 0 by default).\n- People waiting on a floor press a *hall call*: up or down. People inside an elevator press a *car call* for a destination floor.\n- A request identical to one not yet served (same floor and direction for a hall call; same elevator and floor for a car call) is ignored.\n\n**Time**\nTime advances only when the simulation is stepped. In one step, each in-service elevator does exactly one thing: moves one floor, stops at its current floor with its doors open, or stays idle.\n\n**Dispatching hall calls** — at the start of every step, before any elevator acts:\n1. Hall calls without an elevator are considered in the order they were made.\n2. An elevator is eligible for a call at floor f in direction d if it has no pending stops, or if it is travelling in direction d and f is strictly ahead of it.\n3. The eligible elevator nearest to f (in floors) gets the call; ties go to the lowest-numbered elevator. Assignments made earlier in the same step count when judging later calls.\n4. If no elevator is eligible, the call waits and is reconsidered next step. An assigned call stays with its elevator.\n\n**Moving** — then each elevator acts, in number order:\n- An elevator's pending stops are its car calls plus the hall calls assigned to it.\n- It **stops** at its current floor (doors open for that step and every qualifying stop there is cleared) if it has a car call for that floor, an assigned hall call there in its travel direction, or an assigned hall call there in the opposite direction when no pending stop lies further ahead (it turns around and takes the call's direction). An elevator with no direction serves any pending stop at its floor.\n- Otherwise, if it has pending stops, it **moves** one floor in its direction.\n- After acting, it keeps its direction while any pending stop is at or beyond its floor in that direction, otherwise reverses if stops remain behind, otherwise becomes idle with no direction.\n- An idle elevator that receives a stop on another floor takes the direction of its nearest such stop (up on a tie).\n\nThe building manager expects to experiment with other dispatching rules (for example reserving elevators for upper floors during the morning rush) and needs to take elevators out of service for maintenance: an elevator taken out of service drops its car calls, hands its assigned hall calls back for re-dispatch (keeping their original order) and stays where it is until returned to service, when it is idle at that floor.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Create a building with F floors (2–100) and N elevators (1–16) numbered from 1, each starting idle with doors closed at a given floor (floor 0 unless specified).",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Accept a hall call (floor, up or down). Reject floors out of range, up at the top floor and down at floor 0. A hall call identical to one that is waiting or assigned and not yet served is ignored. New calls wait for dispatch at the start of the next step.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Accept a car call (elevator number, destination floor). Reject unknown elevators, out-of-service elevators and floors out of range. A duplicate of an unserved car call is ignored. A car call to an idle elevator sets its direction as described in the statement.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Dispatch waiting hall calls at the start of every step in the order they were made, using the eligibility rule, nearest-elevator choice and lowest-number tie-break from the statement; calls with no eligible elevator keep waiting, and an assignment is never changed except when the elevator leaves service.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Advance the simulation by one step: after dispatch, each in-service elevator in number order either stops (doors open for the step, stop cleared), moves one floor, or stays idle, then updates its direction, exactly following the moving rules in the statement.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "Report status at any time: for each elevator its current floor, its activity in the last step (idle, moving up, moving down, doors open, out of service), its direction and its pending stops; plus the list of hall calls still waiting for an elevator.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-7",
+      "text": "Take an elevator out of service and return it to service: leaving service discards its car calls and returns its assigned hall calls to the waiting list in their original order; while out of service it is never eligible and does nothing; on return it is idle at the same floor.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-8",
+      "text": "Each step reports which elevators stopped at which floors during that step, so a caller can reconstruct the full stop history with step numbers.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library; JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no real clock, threads or sleeping — time moves only when the simulation is stepped.",
+    "Up to 100 floors, 16 elevators and 10,000 pending requests.",
+    "Behaviour must be fully deterministic: the same sequence of requests and steps always produces the same result."
+  ],
+  "assumptions": [
+    "Elevators have unlimited capacity and passengers always board and alight during the single doors-open step.",
+    "Requests made between two steps take effect from the next step.",
+    "Passengers who press a hall call press their car call right after the doors open for them; the simulation does not model passengers explicitly."
+  ],
+  "examples": [
+    {
+      "title": "One elevator, one passenger",
+      "scenario": "Floors 0–9, one elevator E1 at floor 0. Before step 1 a hall call (floor 3, up) is made. After the step in which E1 opens its doors at floor 3, a car call E1 → 7 is made. Step until E1 is idle.",
+      "expected": "Step 1: dispatch gives the call to E1, which moves to floor 1. Steps 2–3: floors 2, 3. Step 4: doors open at 3. Steps 5–8: floors 4, 5, 6, 7. Step 9: doors open at 7. Step 10: E1 is idle at floor 7 with no direction."
+    },
+    {
+      "title": "Choosing between two idle elevators",
+      "scenario": "Floors 0–9, E1 idle at floor 0, E2 idle at floor 8. Before step 1, hall calls (6, up) and then (1, up) are made. Run three steps.",
+      "expected": "Step 1 dispatch: (6, up) → E2 (distance 2 vs 6); E2 now heads down, so it is not eligible for (1, up), which goes to E1 (distance 1). Step 1: E1 moves to 1, E2 to 7. Step 2: E1 opens doors at 1; E2 moves to 6. Step 3: E1 is idle; E2 opens doors at 6 (it turns around to serve the up call) and, with no further stops, becomes idle."
+    },
+    {
+      "title": "Picking up a call on the way",
+      "scenario": "Floors 0–9, E1 and E2 idle at floor 0. Before step 1 a car call E1 → 9 is made. After step 2, hall calls (5, up) and then (5, down) are made. Step until both are idle.",
+      "expected": "Step 3 dispatch: (5, up) → E1 (travelling up, 5 is ahead, distance 3; E2 idle at distance 5). (5, down) → E2 (E1 travels the wrong way). E1 opens its doors at 5 in step 6 and at 9 in step 11, then is idle at step 12. E2 travels up and opens its doors at 5 in step 8 (turnaround, nothing further up), then is idle at step 9."
+    },
+    {
+      "title": "A call that must wait",
+      "scenario": "Floors 0–9, one elevator E1 at floor 0 with a car call to 9 made before step 1. After step 1, a hall call (0, up) is made.",
+      "expected": "(0, up) is not eligible for E1 (it is behind E1, which travels up), so it waits. E1 reaches 9 in step 9 and opens its doors in step 10. At the start of step 11 E1 is idle, receives (0, up) and moves to 8. It reaches floor 0 in step 19 and opens its doors there in step 20."
+    }
+  ],
+  "edgeCases": [
+    "Hall call up at the top floor or down at floor 0 is rejected.",
+    "A duplicate hall call while the first is still waiting or assigned is ignored; once served, the same call can be made again.",
+    "Two eligible elevators at the same distance: the lower-numbered one gets the call.",
+    "A car call to the floor where the elevator is standing idle: the doors open there in the next step.",
+    "An elevator taken out of service while holding assigned hall calls: the calls return to the waiting list in original order and are re-dispatched at the next step.",
+    "A car call for an elevator that is out of service, or for an elevator number that does not exist, is rejected.",
+    "All elevators travelling away from a call for many steps: the call waits without being lost and is assigned as soon as an elevator becomes eligible."
+  ],
+  "outOfScope": [
+    "Real-time behaviour, threads or wall-clock timing.",
+    "Passenger load, weight limits and door sensors.",
+    "Fire, emergency and VIP modes.",
+    "Energy optimisation or travel-time prediction beyond the stated dispatching rule.",
+    "Any UI, persistence or hardware integration."
+  ],
+  "concurrency": {
+    "required": false,
+    "notes": "Not assessed. The simulation is advanced explicitly from a single thread; requests made between steps are applied in call order."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "The four worked examples produce exactly the stated floors, doors-open steps and idle steps.",
+      "requirementIds": [
+        "FR-1",
+        "FR-4",
+        "FR-5",
+        "FR-6"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "Invalid hall calls (out of range, up at top, down at ground) and invalid car calls (unknown or out-of-service elevator, out-of-range floor) are rejected with an error; duplicate unserved requests are ignored.",
+      "requirementIds": [
+        "FR-2",
+        "FR-3"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "A hall call in the opposite direction at an elevator’s furthest stop is served on arrival (turnaround), while the same call with another stop beyond it is served only on the way back.",
+      "requirementIds": [
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "With two equally distant eligible elevators the lower-numbered one is chosen, and an assignment made earlier in a step changes the eligibility used for later calls in that step.",
+      "requirementIds": [
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Taking an elevator out of service returns its assigned hall calls to the waiting list in order, discards its car calls, and those calls are re-dispatched to other elevators at the next step.",
+      "requirementIds": [
+        "FR-7",
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "Status and per-step stop reports agree with each other and with the step-by-step behaviour of the examples.",
+      "requirementIds": [
+        "FR-6",
+        "FR-8"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Add a second dispatching rule — zoning, where each elevator only accepts hall calls for a configured floor range — selectable when the building is created, leaving the original rule as the default."
+    },
+    {
+      "id": "SG-2",
+      "text": "Report the average and maximum number of steps hall calls waited between being made and being served."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-4 and FR-5 carry the weight: replay the four worked examples step by step (dispatch choice, turnaround at the furthest stop, waiting calls picked up when an elevator goes idle). Off-by-one errors in step counting are correctness defects, not style issues.",
+    "modeling": "Expect distinct responsibilities for request intake and validation, dispatching hall calls across elevators, and a single elevator's movement and stop bookkeeping. The dispatcher should decide from elevator state rather than duplicating movement rules.",
+    "principles": "An elevator's floor, direction and stops should change only through its own operations so the direction-update rule lives in one place. Concurrency is not assessed: the simulation is stepped from a single thread.",
+    "extensibility": "The statement makes two changes plausible: alternative dispatching rules (e.g. zoning) and maintenance mode. Replacing the dispatching rule should not require touching movement logic. Beyond that, simple concrete code is preferred to speculative abstraction.",
+    "readability": "The step routine should read like the statement: dispatch first, then each elevator acts. Named concepts for direction and activity beat integer flags and sign tricks.",
+    "edge_cases": "Look for deliberate handling of invalid hall calls, duplicates, distance ties, calls with no eligible elevator, car calls to the current floor and out-of-service elevators that hold assigned calls.",
+    "tests": "Strong submissions turn the worked examples into step-by-step tests and add focused tests for tie-breaking, turnaround, waiting-call assignment and out-of-service re-dispatch."
+  }
+}

@@ -30,4 +30,4 @@ The workflow follows GitHub's [custom Pages workflow documentation](https://docs
 - `site/script.js`: accessible preview tabs and copying setup commands.
 - `site/favicon.svg`: site icon.
 
-The preview is explicitly illustrative. Keep its descriptions and the problem counts in sync with the application. The setup instructions clone https://github.com/design-dojo-labs/design-dojo. The intended Pages URL is https://design-dojo-labs.github.io/design-dojo/.
+The preview is explicitly illustrative. Keep its descriptions and the problem counts in sync with the application. The setup instructions use `pip install design-dojo` followed by `design-dojo --open`, with a link to https://pypi.org/project/design-dojo/. The intended Pages URL is https://design-dojo-labs.github.io/design-dojo/.

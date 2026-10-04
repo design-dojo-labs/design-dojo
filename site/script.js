@@ -25,7 +25,7 @@ document.getElementById('copy-command').addEventListener('click', async () => {
   const status = document.getElementById('copy-status');
   try {
     await navigator.clipboard.writeText(document.getElementById('install-command').textContent);
-    status.textContent = 'Copied. Paste into your terminal to clone and start Design Dojo.';
+    status.textContent = 'Copied. Paste into your terminal to install and start Design Dojo.';
   } catch {
     status.textContent = 'Select and copy the commands above; clipboard access is unavailable.';
   }

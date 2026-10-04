@@ -1,0 +1,86 @@
+{
+  "id": "chat-messaging",
+  "title": "Real-Time Chat Messenger",
+  "summary": "Design a mobile-first messenger with 1:1 and group chats, ordered and reliable delivery, sent/delivered/read receipts, presence and multi-device sync.",
+  "difficulty": "hard",
+  "targets": [
+    "sde2",
+    "senior"
+  ],
+  "domain": "messaging",
+  "estimatedMinutes": 75,
+  "statement": "You are designing **a mobile-first chat app** used by hundreds of millions of people on phones and on a web/desktop client.\n\n**Core journeys**\n1. **1:1 chat** — a user sends a text message to a contact. If the recipient is online it appears on their screen almost immediately; if they are offline they get a push notification and see the message when they open the app.\n2. **Group chat** — users create groups of up to 500 members, add and remove members, and send messages that every current member receives.\n3. **Receipts** — the sender sees one tick when the server has accepted the message, two ticks when it reached the recipient's device and blue ticks when it was read. In groups, \"message info\" shows who has received and who has read it.\n4. **Presence** — contacts show as \"online\", \"typing…\" or \"last seen 10 minutes ago\". Users can hide their last-seen time.\n5. **Multi-device** — a user can be logged in on up to 4 devices (1 phone plus 3 web/desktop sessions). Every device shows the same conversations, and a newly linked device can load the last year of history.\n6. **History** — scrolling up in a conversation loads older messages.\n\n**Clarifications from the interviewer**\n- Messages are text up to 4 KB. Attachments are uploaded elsewhere and appear in a message as a reference; the upload pipeline is not part of this problem.\n- Every participant must see the messages of a conversation in the same order.\n- Phones have flaky connections: the app is often backgrounded, switches between Wi-Fi and mobile data, and resends a message if it didn't hear back. The recipient must still see it exactly once.\n- Once the sender sees the first tick, the message must not be lost, even if a server crashes.\n- Users are spread across North America, Europe, India and Southeast Asia and often chat across regions.\n\nCover requirements, estimates, API (including how clients and servers talk in real time), data model and architecture, then dive deep into delivery guarantees and the hardest scaling problems.",
+  "scaleHints": [
+    "200M DAU; up to ~80M devices connected at the same time at peak",
+    "~10B messages per day (~115K/s on average, ~350K/s at peak); ~80% are 1:1",
+    "Groups have up to 500 members; an average group message reaches 25 recipients",
+    "~300 bytes per stored message including metadata; history kept 1 year for multi-device sync (~1 PB per year)",
+    "Delivery p99 under 500 ms when both users are online in the same region, under 1 s across regions",
+    "Presence changes should reach contacts who have the chat open within ~5 s"
+  ],
+  "constraints": [
+    "No message loss after the server acknowledges it; duplicates from retries must never be shown twice",
+    "Consistent per-conversation ordering for all participants and all of a user's devices",
+    "99.99% availability for sending and receiving; losing one server or zone must not lose messages",
+    "Battery and mobile data matter: avoid chatty background traffic from phones"
+  ],
+  "outOfScope": [
+    "End-to-end encryption protocol design (assume the server stores opaque payloads)",
+    "Voice and video calls",
+    "Media upload, processing and storage",
+    "Spam/abuse detection and contact discovery"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Send/receive 1:1 and group messages in real time; offline delivery on reconnect plus push notification",
+      "Group management (create, add/remove members, max 500) with membership-consistent delivery",
+      "Sent/delivered/read receipts, including per-member status in groups",
+      "Presence (online/last seen with privacy setting) and typing indicators",
+      "Multi-device sync with per-device delivery state and history backfill",
+      "Paginated conversation history"
+    ],
+    "keyNonFunctionalRequirements": [
+      "~350K messages/s at peak and ~80M concurrent persistent connections",
+      "Delivery latency p99 < 500 ms intra-region, < 1 s cross-region",
+      "Durable once acknowledged; idempotent handling of client retries",
+      "Total order per conversation",
+      "High availability across zones/regions with graceful reconnect after gateway failure",
+      "~1 PB/year of history with fast reads of recent messages"
+    ],
+    "coreEntities": [
+      "Conversation: conversation_id, type (1:1/group), membership version, created_at",
+      "Message: conversation_id, seq (per-conversation monotonic), message_id, client_msg_id, sender_id, sender_device, body/ref, created_at",
+      "GroupMember: conversation_id, user_id, role, joined_at",
+      "DeviceCursor: user_id, device_id, conversation_id, last_delivered_seq, last_read_seq",
+      "Receipt watermarks: conversation_id, user_id, delivered_up_to_seq, read_up_to_seq",
+      "Presence (ephemeral): user_id, status, last_seen_at, connected gateway/session",
+      "Device: user_id, device_id, platform, push_token"
+    ],
+    "keyComponents": [
+      "Connection gateways holding persistent bidirectional connections with heartbeats",
+      "Session registry mapping user/device → gateway for routing",
+      "Message service that dedups by client_msg_id, assigns per-conversation sequence, persists, then acks",
+      "Message store partitioned by conversation id, optimised for appends and recent-range reads",
+      "Fan-out/routing workers delivering to online devices and recording pending items for offline ones",
+      "Push notification service for offline devices",
+      "Presence service fed by heartbeats, publishing only to interested subscribers",
+      "Receipt service maintaining delivered/read watermarks"
+    ],
+    "deepDiveTopics": [
+      "Delivery guarantees: client_msg_id dedup, ack after durable write, per-device cursors, resync on reconnect, exactly-once display",
+      "Ordering: per-conversation sequence numbers from a single owner/partition vs timestamps and clock skew",
+      "Group fan-out to 500 members and receipt write amplification; read/delivered watermarks instead of per-message rows",
+      "Presence at scale: heartbeat timeouts, lazy last-seen, subscribing only to chats on screen, avoiding update storms",
+      "Gateway failure and reconnect storms: jittered reconnects, resuming from cursors, rebalancing connections",
+      "Cross-region chats: home region per conversation vs per user, and the latency/consistency trade-off"
+    ],
+    "commonPitfalls": [
+      "Clients polling for new messages instead of persistent connections plus push",
+      "Ordering by client or server wall-clock timestamps",
+      "Acknowledging the sender before the message is durably stored",
+      "A receipt row per message per group member, multiplying writes 25–500×",
+      "Broadcasting every presence change to all contacts",
+      "Keeping the user → connection mapping only in one gateway's memory, so other servers cannot route"
+    ]
+  }
+}

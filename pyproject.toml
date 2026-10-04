@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "design-dojo"
+version = "0.1.0"
+description = "Local interview practice studio for Java low-level design and system design"
+readme = "python/README.md"
+requires-python = ">=3.10"
+dependencies = ["nodejs-wheel-binaries>=22.12,<23", "filelock>=3.16,<4"]
+keywords = ["interview", "system-design", "low-level-design", "java", "practice"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Education",
+  "Topic :: Software Development",
+]
+
+[project.scripts]
+design-dojo = "design_dojo.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["design_dojo*"]
+
+[tool.setuptools.package-data]
+design_dojo = ["runtime.tar.gz"]

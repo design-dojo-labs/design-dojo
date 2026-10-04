@@ -1,0 +1,83 @@
+{
+  "id": "collaborative-document-editor",
+  "title": "Collaborative Document Editor",
+  "summary": "Design a browser-based document editor where many people edit the same rich-text document at once, see each other's cursors live, and always end up with identical content.",
+  "difficulty": "hard",
+  "targets": [
+    "sde2",
+    "senior"
+  ],
+  "domain": "collaboration",
+  "estimatedMinutes": 80,
+  "statement": "You are designing **a browser-based collaborative document editor**, similar in spirit to the word processors teams use to write specs, meeting notes and proposals together.\n\n**Core journeys**\n1. **Create and open** documents with rich text: headings, bold/italic, lists, tables, links and inline images.\n2. **Co-edit** — several people edit the same document at the same time. Each person's typing appears on everyone else's screen within a fraction of a second, and everyone ends up with exactly the same document, even when two people type into the same sentence at the same moment.\n3. **Presence** — collaborators see who else is in the document, with each person's cursor and selection shown in their colour.\n4. **Sharing** — the owner shares a document with specific people, or with \"anyone in the company with the link\", as viewer or editor. Viewers see changes live but cannot edit.\n5. **Offline** — someone on a flight keeps editing; when they reconnect hours later, their changes merge in without overwriting anyone else's work.\n6. **Version history** — users browse earlier versions (\"Tuesday 10:42 — edited by Asha\"), see what changed, name a version and restore an earlier one.\n\n**Clarifications from the interviewer**\n- Typing must feel instant locally — the editor may never wait for a server round trip before showing a keystroke.\n- Most documents have 1–3 people editing at once, but company-wide documents (all-hands notes, incident docs) can have 200 editors and thousands of viewers at the same time.\n- Documents can grow to the length of a long book and accumulate years of edits.\n- Once the editor shows \"saved\", a change must never be lost.\n\nCover requirements, estimates, API (including how editors exchange changes in real time), data model and architecture, then dive into conflict resolution and the scaling challenges.",
+  "scaleHints": [
+    "30M DAU; ~2M documents open at peak with ~3M concurrent editing sessions",
+    "~1M edit operations/s at peak across all documents (keystrokes batched every ~100 ms)",
+    "Typical document holds 50 KB of content; the maximum is ~10 MB",
+    "Hot documents: up to 200 concurrent editors and 5,000 concurrent viewers",
+    "Remote edits visible to other collaborators within 200 ms at p95 (same region)",
+    "Fine-grained version history kept 30 days; named versions kept forever"
+  ],
+  "constraints": [
+    "All copies of a document must converge to identical content regardless of the order in which edits arrive",
+    "No edit may be lost once it is shown as saved",
+    "Permissions are enforced on the server for every change; viewers can never inject edits",
+    "Offline sessions lasting several hours must merge without manual conflict resolution"
+  ],
+  "outOfScope": [
+    "Comments, suggestion mode and @-mentions",
+    "Spreadsheets, slides and other document types",
+    "Full-text search across documents",
+    "Import/export to other file formats"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Create, open and edit rich-text documents",
+      "Real-time concurrent editing with automatic conflict resolution and convergence",
+      "Presence: live collaborator list, cursors and selections",
+      "Sharing and permissions (owner/editor/viewer, link sharing)",
+      "Offline editing with merge on reconnect",
+      "Version history: browse, diff, name and restore versions"
+    ],
+    "keyNonFunctionalRequirements": [
+      "Instant local echo; remote propagation < 200 ms at p95",
+      "Guaranteed convergence and durability of acknowledged operations",
+      "~1M ops/s aggregate; hot documents with 200 editors and 5,000 viewers",
+      "Fast load even for long-lived, heavily edited documents",
+      "High availability; sessions recover transparently after a server failure"
+    ],
+    "coreEntities": [
+      "Document: doc_id, owner_id, title, created_at, latest_snapshot_ref, latest_seq",
+      "Operation: doc_id, seq (server-assigned), client_id, client_seq, base_seq, payload, author_id, ts",
+      "Snapshot: doc_id, seq, storage_ref, created_at",
+      "ACL entry: doc_id, principal (user/group/link), role",
+      "NamedVersion: doc_id, seq, name, created_by, created_at",
+      "Presence (ephemeral): doc_id, user_id, session_id, cursor/selection, colour"
+    ],
+    "keyComponents": [
+      "Collaboration servers holding WebSocket sessions, with routing so each document's sessions reach its owning server/partition",
+      "OT transformation engine or CRDT merge logic on client and server",
+      "Durable append-only operation log per document with server-assigned sequence numbers",
+      "Snapshot/compaction service writing periodic document snapshots to blob storage",
+      "Document metadata and permissions service",
+      "Ephemeral presence channel (not persisted) with throttled cursor broadcasts",
+      "Version history service built from snapshots plus the op log",
+      "Viewer fan-out tier for read-only subscribers of hot documents"
+    ],
+    "deepDiveTopics": [
+      "OT vs CRDT: central sequencing vs peer merge, metadata/tombstone overhead, offline friendliness, rich-text complexity",
+      "One authoritative owner per document: routing, leases and failover, recovering in-flight operations",
+      "Op log plus snapshots: compaction policy and fast loading of heavily edited documents",
+      "Scaling hot documents: batching ops, throttling presence, separate fan-out for viewers",
+      "Offline merge and reconnection: idempotent resend of unacknowledged ops keyed by client_id + client_seq"
+    ],
+    "commonPitfalls": [
+      "Last-write-wins on whole documents or paragraphs, losing concurrent edits",
+      "Locking paragraphs or sections, which defeats real-time co-editing",
+      "Saving the entire document on every keystroke",
+      "Persisting cursor and presence updates in durable storage",
+      "Sending editors of the same document to arbitrary servers without coordination",
+      "Never compacting the op log, so opening old documents replays millions of ops"
+    ]
+  }
+}

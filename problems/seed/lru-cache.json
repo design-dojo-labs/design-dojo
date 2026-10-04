@@ -1,0 +1,184 @@
+{
+  "id": "lru-cache",
+  "title": "Thread-Safe LRU Cache",
+  "summary": "Build a fixed-capacity, thread-safe in-memory cache with O(1) operations, LRU and FIFO eviction chosen at creation, optional per-entry expiry and hit/miss statistics.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "topics": [
+    "caching",
+    "concurrency"
+  ],
+  "estimatedMinutes": 60,
+  "statement": "Several services in your company each hand-roll a small in-memory cache in front of slow lookups such as prices and user profiles. You are building one reusable cache library they can all share.\n\n**Behaviour**\n- A cache is created with a capacity — the maximum number of entries it may hold, at least 1 — and an eviction policy.\n- Callers can get a value by key, put a key–value pair, remove a key, and ask for the current number of entries. Null keys and null values are rejected.\n- Putting a key that is already present replaces its value and never evicts anything.\n- When a put adds a new key to a full cache, exactly one existing entry is evicted first, chosen by the eviction policy.\n- Two eviction policies are required, chosen when the cache is created:\n  - **Least recently used (LRU)** — evict the entry whose last get or put is the oldest.\n  - **First in, first out (FIFO)** — evict the entry that was inserted earliest; reads and value updates do not change its position.\n- Further policies, such as least frequently used, are expected later; teams want to add them without touching the rest of the cache.\n\n**Expiry (optional, per entry)**\nA put may give a time-to-live. Once the current time reaches the insertion time plus the time-to-live, the entry is never returned again: a get treats it as missing and removes it. Expired entries may occupy space until they are read or evicted. Updating a key gives it the new put's time-to-live (none if omitted).\n\n**Statistics**\nThe cache counts hits, misses and evictions since it was created.\n\n**Performance and concurrency**\n- get, put and remove must take O(1) average time regardless of capacity, which can be up to one million entries.\n- One cache instance is shared by many request-handling threads. Every operation must behave as if it happened atomically at a single instant, and the cache must stay correct however the threads interleave.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Create a cache with a capacity of at least 1 and an eviction policy (LRU or FIFO); an invalid capacity or missing policy is rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Getting a key returns its value if the entry is present and not expired, otherwise reports it missing. Under LRU a successful get makes the entry the most recently used; under FIFO it changes nothing.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Putting a key and value inserts a new entry or replaces the value of an existing one. Replacing never evicts and does not change the number of entries; under LRU it makes the entry most recently used, under FIFO it keeps its original position.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "When a put adds a new key to a full cache, evict exactly one entry first — the least recently used under LRU, the earliest inserted under FIFO — so the number of entries never exceeds the capacity.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Removing a key deletes its entry and reports whether it was present; the size reported is the number of entries currently held, including expired entries not yet removed.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "All operations are safe to call concurrently from many threads on one cache instance, with the guarantees given in the concurrency notes.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-7",
+      "text": "Support an optional positive time-to-live per put: an entry is expired once now ≥ insertion time + TTL, is never returned after that, and is removed when a get finds it expired. A zero or negative TTL is rejected.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-8",
+      "text": "Report statistics: hits (gets that returned a value), misses (gets that did not, including expired entries) and evictions (entries removed to make room).",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library (java.util.concurrent is allowed); JUnit 5 may be used for tests.",
+    "Do not rely on a library collection that already implements access ordering or eviction (for example LinkedHashMap in access-order mode or its eldest-entry removal hook) or on caching libraries.",
+    "get, put and remove must run in O(1) average time; capacity can be up to 1,000,000 entries.",
+    "Single JVM process with all state in memory.",
+    "Expiry time comes from a clock that tests can control; millisecond precision."
+  ],
+  "assumptions": [
+    "Keys have correct equals and hashCode implementations and are not mutated while in the cache.",
+    "Values are treated as opaque; no defensive copies are needed.",
+    "Capacity is fixed for the life of a cache."
+  ],
+  "examples": [
+    {
+      "title": "LRU order",
+      "scenario": "LRU cache, capacity 3: put a=1, b=2, c=3; get a; put d=4; get b; put c=30; put e=5.",
+      "expected": "get a returns 1. Putting d evicts b (least recently used). get b is a miss. put c=30 replaces c without eviction. Putting e evicts a. Final contents d=4, c=30, e=5; size 3; hits 1, misses 1, evictions 2."
+    },
+    {
+      "title": "FIFO ignores reads and updates",
+      "scenario": "FIFO cache, capacity 2: put x=1, y=2; get x; put z=3; put y=20; put w=4.",
+      "expected": "Putting z evicts x (inserted first, even though it was just read). put y=20 replaces y in place and keeps its original position. Putting w evicts y. Final contents z=3, w=4."
+    },
+    {
+      "title": "Expiry boundary",
+      "scenario": "LRU cache, capacity 2. At t=0 ms put k=v with a TTL of 10,000 ms. get k at t=9,999 ms; get k at t=10,000 ms.",
+      "expected": "The first get returns v (hit). The second is a miss because the entry has expired; k is removed and size becomes 0."
+    },
+    {
+      "title": "Contention",
+      "scenario": "LRU cache, capacity 100. 8 threads start together; each puts 10,000 distinct keys of its own (80,000 distinct keys overall) interleaved with 10,000 gets of random keys from the whole key range.",
+      "expected": "No exceptions. Afterwards size is exactly 100, hits + misses = 80,000, evictions = 79,900 (80,000 inserts − 100 remaining), and every value returned by a get was the value put for that key."
+    }
+  ],
+  "edgeCases": [
+    "Capacity 1: every new key evicts the previous entry.",
+    "A put of an existing key into a full cache evicts nothing.",
+    "A get of a missing key does not change the recency of other entries.",
+    "remove of a missing key returns false and does not change the statistics.",
+    "Null key or null value is rejected and the cache is unchanged.",
+    "A zero or negative TTL is rejected; updating a key with no TTL makes it never expire.",
+    "The cache is full of expired-but-unread entries: a new put still evicts according to the policy."
+  ],
+  "outOfScope": [
+    "Sharing a cache across processes or machines.",
+    "Persisting or spilling entries to disk.",
+    "Loading missing values automatically on a miss.",
+    "Capacity measured in bytes rather than entries.",
+    "Exporting statistics to monitoring systems."
+  ],
+  "concurrency": {
+    "required": true,
+    "notes": "Must be thread-safe: get, put, remove, size and statistics may be called concurrently on one cache from many threads. Guarantees: (1) every operation is atomic — it behaves as if it ran alone at some instant between its call and return; (2) once any operation returns, the number of entries does not exceed capacity; (3) no lost updates: concurrent puts of distinct keys that fit within capacity are all present afterwards; (4) a get only returns a value that was put for that key; (5) statistics are exact — hits + misses equals completed gets and evictions equals entries evicted; (6) internal ordering is never corrupted: no exceptions, lost or duplicated entries under contention. Correctness under contention is required; throughput is secondary."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "The LRU and FIFO examples produce exactly the stated evictions, final contents and statistics.",
+      "requirementIds": [
+        "FR-1",
+        "FR-2",
+        "FR-3",
+        "FR-4",
+        "FR-8"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "Updating an existing key in a full cache never evicts, under both policies.",
+      "requirementIds": [
+        "FR-3",
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "remove reports presence correctly and size reflects inserts, updates, removals and evictions.",
+      "requirementIds": [
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "With a controlled clock an entry is returned 1 ms before its expiry and missing at the expiry instant, and is then removed.",
+      "requirementIds": [
+        "FR-7",
+        "FR-8"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "The contention example passes repeatedly: size exactly 100, hits + misses = 80,000, evictions = 79,900, no exceptions.",
+      "requirementIds": [
+        "FR-6",
+        "FR-4",
+        "FR-8"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "Null keys/values, capacity below 1 and non-positive TTLs are rejected without changing the cache.",
+      "requirementIds": [
+        "FR-1",
+        "FR-7"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Add a least-frequently-used policy, breaking ties by least recently used, without changing the get/put code paths."
+    },
+    {
+      "id": "SG-2",
+      "text": "Let callers be told about every entry that leaves the cache, with its key, value and the reason (evicted, expired or removed)."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2 to FR-5 carry the weight: check exact recency and insertion-order behaviour from the worked examples (updates without eviction, FIFO ignoring reads) and that eviction happens only when a new key is added to a full cache.",
+    "modeling": "Expect the bookkeeping that chooses an eviction victim to be separable from key-to-value storage, so LRU and FIFO differ only in that bookkeeping. Expiry and statistics should not be entangled with policy-specific code.",
+    "principles": "Internal ordering structures must never be exposed to callers, and invariants (size ≤ capacity, storage and ordering agree) should be maintained in one place. Concurrency is required: check-then-act gaps between lookup, eviction and insertion are serious defects, whatever mechanism is used.",
+    "extensibility": "The statement explicitly anticipates new eviction policies (e.g. LFU); adding one should not require changing get/put logic. That one seam is justified — further speculative abstraction (swappable storage, generic event systems) should not earn credit.",
+    "readability": "Any custom ordering bookkeeping should be small, well named and easy to verify; coordination code should be visibly separate from data-structure logic.",
+    "edge_cases": "Check capacity 1, updates in a full cache, null keys and values, the TTL boundary (expired exactly at insertion + TTL), invalid TTL and capacity, and removal of absent keys.",
+    "tests": "Expect deterministic tests for LRU and FIFO order and for expiry with a controlled clock, plus at least one multi-threaded test asserting size and exact statistics after contention."
+  }
+}

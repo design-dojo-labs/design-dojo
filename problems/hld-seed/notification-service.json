@@ -1,0 +1,86 @@
+{
+  "id": "notification-service",
+  "title": "Multi-Channel Notification Platform",
+  "summary": "Design a shared platform that lets product teams send push, SMS, email and in-app notifications to hundreds of millions of users while honouring preferences and coping with flaky providers.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "domain": "messaging",
+  "estimatedMinutes": 55,
+  "statement": "A large consumer company (shopping, payments and food delivery in one app) wants **one notification platform** that every product team calls, instead of each team integrating with push, SMS and email providers on its own.\n\n**Who uses it**\n- *Internal services* send transactional notifications triggered by events: one-time passwords (OTPs), \"payment received\", \"order out for delivery\", security alerts.\n- *The marketing team* sends campaigns to a pre-computed audience (a list of user ids) — for example a festival offer to 50M users.\n- *End users* receive notifications on their phones, by email, by SMS and in an in-app inbox, and manage their preferences in settings.\n\n**Core journeys**\n1. A service asks to notify one user or a list of users by naming a template, a category (e.g. `otp`, `order-updates`, `promotions`), the template variables and, optionally, the channels to try. The platform answers quickly with an id the caller can use to check status.\n2. The platform decides the actual channels from the request, the category defaults and the user's preferences, renders the template in the user's language, and delivers it through external providers (Apple/Google push services, SMS aggregators, an email provider).\n3. Users opt out per category and per channel, and set quiet hours in their own time zone. Promotions respect quiet hours; OTPs and security alerts ignore them.\n4. The in-app inbox shows the user's last 90 days of notifications with read/unread state.\n5. Support staff look up what was sent to a user and whether each attempt was delivered, failed or bounced.\n\n**Clarifications from the interviewer**\n- Providers are third parties: they time out occasionally, return rate-limit errors and sometimes go down for minutes. A message that fails on one SMS provider may be retried on a second one.\n- Callers sometimes retry their own requests after a timeout; users must not receive the same OTP or order update twice.\n- A user should get at most 3 promotional notifications per day across all channels.\n- A user can have several devices; device tokens stop working when the app is uninstalled.\n\nDesign the platform end to end — requirements, estimates, API, data model and architecture — then go deep where you think it matters most.",
+  "scaleHints": [
+    "200M registered users, 50M DAU; on average 1.5 push-capable devices per user",
+    "~600M notifications per day overall (~7K/s on average); transactional traffic peaks at ~20K/s during sale events",
+    "A campaign can target 50M users and must be fully dispatched within 1 hour (~14K/s on top of normal traffic)",
+    "OTPs and security alerts: p99 under 2 s from API acceptance to provider hand-off; other transactional messages within 30 s",
+    "Delivery history kept 90 days for support and the in-app inbox, at ~1 KB per notification record"
+  ],
+  "constraints": [
+    "Opt-outs and quiet hours are legal and trust requirements: no promotion may be sent after the user unsubscribed",
+    "Providers enforce account-level rate limits (e.g. SMS 1,000/s per account, email 5,000/s) and charge per message",
+    "Campaigns or a misbehaving caller must never delay OTPs",
+    "Duplicate sends must be suppressed before they reach the user, even when callers or internal steps retry"
+  ],
+  "outOfScope": [
+    "Building push, SMS or email delivery infrastructure itself — external providers are given",
+    "Audience segmentation and the campaign authoring UI (audiences arrive as user-id lists)",
+    "A/B testing, engagement analytics and send-time optimisation",
+    "Template design tooling (templates already exist and are versioned)"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Send API for single-user and bulk/campaign notifications with template id, category, variables and an idempotency key; returns a notification id",
+      "Channel resolution from category defaults, requested channels and user preferences (opt-outs, quiet hours, frequency caps)",
+      "Localised template rendering per user",
+      "Delivery through external providers with retries, backoff and failover between providers",
+      "Status tracking (queued, sent, delivered, failed, bounced) queryable by notification id and by user",
+      "In-app inbox with 90-day history and read/unread state",
+      "Device token registration and removal of invalid tokens"
+    ],
+    "keyNonFunctionalRequirements": [
+      "Throughput: ~7K/s average, ~20K/s transactional peak plus ~14K/s campaign dispatch",
+      "Latency SLOs by priority: OTP p99 < 2 s, transactional < 30 s, promotions within the campaign window",
+      "Priority isolation so bulk traffic can never starve critical traffic",
+      "No accepted notification is lost; at-least-once processing with dedup gives effectively-once delivery to users",
+      "Respect provider rate limits and degrade gracefully when a provider is down",
+      "Compliance: preferences enforced at send time and every attempt auditable"
+    ],
+    "coreEntities": [
+      "Notification: notification_id, idempotency_key, user_id, category, template_id, variables, priority, status, created_at",
+      "DeliveryAttempt: notification_id, channel, provider, attempt_no, status, provider_message_id, error, timestamps",
+      "UserPreference: user_id, category, channel, opted_in, quiet_hours, timezone, locale",
+      "Device: user_id, device_id, platform, push_token, last_seen, valid",
+      "Template: template_id, version, channel, locale, body",
+      "InboxItem: user_id, notification_id, title, body, created_at, read_at",
+      "Campaign: campaign_id, template_id, audience_ref, scheduled_at, status, progress counters"
+    ],
+    "keyComponents": [
+      "Ingestion API that validates, dedups by idempotency key, persists and acknowledges quickly",
+      "Durable work queues/streams separated by priority (critical, transactional, bulk)",
+      "Preference and routing service resolving channels, quiet hours and frequency caps",
+      "Template rendering service with a template cache",
+      "Per-channel delivery workers with provider adapters, rate limiting, retry/backoff, failover and a dead-letter path",
+      "Campaign fan-out workers that expand audiences in batches and pace dispatch",
+      "Status store plus a webhook handler for provider delivery receipts",
+      "Inbox store optimised for reading a user's recent items"
+    ],
+    "deepDiveTopics": [
+      "Priority isolation: separate lanes and worker pools, plus reserved provider capacity so OTPs never queue behind a 50M campaign",
+      "Retries and failover: exponential backoff with jitter, retry budgets, per-provider circuit breakers, dead letters and when to give up",
+      "Idempotency across caller retries and worker redelivery: idempotency-key table with TTL and a per-notification state machine",
+      "Evaluating preferences at send time vs enqueue time; enforcing per-user frequency caps with shared counters",
+      "Campaign fan-out: chunking the audience, pacing to provider limits, pausing or cancelling mid-flight",
+      "Provider callbacks and invalid-token cleanup to keep the device registry healthy"
+    ],
+    "commonPitfalls": [
+      "Calling providers synchronously inside the send API request",
+      "One shared queue for all traffic, letting a campaign block OTPs",
+      "Retries without idempotency, producing duplicate OTPs and SMS charges",
+      "Checking preferences only when a campaign is scheduled, ignoring opt-outs made since",
+      "Ignoring provider rate limits and failure modes (no backoff, failover or dead-letter handling)",
+      "Not checking campaign throughput against the 1-hour window"
+    ]
+  }
+}

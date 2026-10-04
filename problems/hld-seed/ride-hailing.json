@@ -1,0 +1,83 @@
+{
+  "id": "ride-hailing",
+  "title": "Ride-Hailing Dispatch Platform",
+  "summary": "Design the backend of a ride-hailing app: ingest live driver locations, match riders with nearby drivers within seconds, and run the trip lifecycle reliably across many cities.",
+  "difficulty": "hard",
+  "targets": [
+    "sde2",
+    "senior"
+  ],
+  "domain": "maps-location",
+  "estimatedMinutes": 75,
+  "statement": "You are designing the core backend of **a ride-hailing app** operating in about 100 cities on several continents.\n\n**Drivers**\n- Go online and offline. While online (and during trips) the driver app reports its GPS position every 4 seconds.\n- Receive ride offers (\"pickup 1.2 km away, 6 min\") and accept or decline each within 15 seconds.\n- Move the trip forward: arrived at pickup → trip started → trip completed. Drivers can cancel before pickup.\n\n**Riders**\n- Open the app and see available cars moving on the map around them.\n- Enter a destination, see an upfront fare and a pickup ETA, and request a ride.\n- Get matched with a driver, watch the driver approach on the map and follow the trip live.\n- Can cancel before pickup (a fee applies after 2 minutes) and receive a receipt with the route after the trip.\n\n**Clarifications from the interviewer**\n- Matching should prefer the driver with the shortest *driving* time to the pickup, not just the nearest in a straight line. If the offered driver declines or doesn't answer, the next best driver is tried, for up to 3 minutes in total before the rider is told no cars are available.\n- A pricing component (fare plus any surge multiplier for an area) and a maps component (routes and ETAs) already exist; treat them as dependencies you call.\n- Demand is spiky and very local: a concert ending can produce thousands of requests within a few square kilometres in minutes.\n- Mobile connectivity is unreliable; apps may disconnect for tens of seconds and reconnect.\n- Trips are local to a city; nobody needs to see drivers from another city.\n\nCover requirements, estimates, API, data model and architecture, then go deep on location handling, matching and keeping trips consistent.",
+  "scaleHints": [
+    "5M registered drivers; up to 1.5M online simultaneously at the global peak",
+    "Location updates every 4 s from online drivers → ~375K updates/s at peak (~100 bytes each)",
+    "~20M completed trips per day (~230/s on average); ride requests peak at ~1K/s globally, with single-city hotspots of ~200/s",
+    "Rider sees a matched driver within 10 s at p95; positions on the map refresh every 4–5 s",
+    "Completed-trip routes kept 2 years for receipts and disputes; idle-driver pings need not be kept beyond 24 hours"
+  ],
+  "constraints": [
+    "A driver must never be assigned two active trips, and a ride request must never be matched to two drivers",
+    "In-progress trips must survive server failures (99.99% availability for the trip lifecycle)",
+    "Driver positions used for matching must be at most ~10 s old; drivers who stopped reporting must not receive offers",
+    "Location data is personal data: access is restricted and regional retention limits apply"
+  ],
+  "outOfScope": [
+    "Payment processing, driver payouts and tipping",
+    "Pricing/surge algorithms and routing/ETA engine internals (both are given dependencies)",
+    "Pooled or scheduled rides and food delivery",
+    "Driver onboarding, ratings and support tooling"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Driver online/offline status and continuous location ingestion",
+      "Show nearby available drivers to riders on a map",
+      "Fare and ETA estimate, then ride request",
+      "Dispatch: rank candidates by ETA, send offers with a 15 s timeout, try the next driver, give up after 3 min",
+      "Trip state machine: requested → matched → driver arriving → in progress → completed / cancelled",
+      "Live trip tracking for the rider and a receipt with the route"
+    ],
+    "keyNonFunctionalRequirements": [
+      "Ingest ~375K location updates/s into a queryable live index with low latency",
+      "Match within 10 s at p95; nearby-driver queries in tens of milliseconds",
+      "Strong consistency for assignments (no double booking) while locations can be eventually consistent",
+      "99.99% availability for in-flight trips; tolerate client disconnects",
+      "Geographic partitioning by city/region and handling of local hotspots"
+    ],
+    "coreEntities": [
+      "Driver: driver_id, vehicle, status (offline/available/offered/on_trip), current_trip_id, city",
+      "DriverLocation (live, ephemeral): driver_id, lat, lng, heading, cell_id, updated_at",
+      "RideRequest: request_id, rider_id, pickup, dropoff, fare_quote_id, status, created_at",
+      "Trip: trip_id, rider_id, driver_id, state, per-state timestamps, fare, route_ref, version",
+      "DispatchOffer: offer_id, request_id, driver_id, sent_at, expires_at, response",
+      "TripRoutePoint (history): trip_id, ts, lat, lng"
+    ],
+    "keyComponents": [
+      "Location ingestion service accepting high-rate driver pings over persistent connections",
+      "In-memory geospatial index of available drivers (geohash/H3/S2 cells or quadtree), partitioned by city",
+      "Dispatch/matching service that queries candidates, calls the ETA service and reserves a driver atomically",
+      "Trip service owning the trip state machine with durable storage and idempotent transitions",
+      "Real-time push channel to rider and driver apps (offers, positions, trip updates)",
+      "Pricing and maps/ETA dependencies, with caching of area-level results",
+      "Location history pipeline writing trip routes to cheap durable storage",
+      "Notification service for backgrounded apps"
+    ],
+    "deepDiveTopics": [
+      "Geospatial indexing at 375K updates/s: cell size trade-offs, searching neighbouring cells/rings, partitioning by city",
+      "Preventing double assignment: compare-and-set or a lease on the driver that expires with the offer timeout",
+      "Dispatch strategy: greedy best-ETA vs batching requests over a short window; handling declines and timeouts",
+      "Hotspots (stadiums, airports): splitting hot cells, queueing requests, protecting the ETA dependency",
+      "Durable, idempotent trip state transitions under retries and app reconnects",
+      "Stale or disconnected drivers: heartbeat TTLs and eviction from the live index"
+    ],
+    "commonPitfalls": [
+      "Writing every location ping synchronously to a relational database with a spatial index",
+      "Matching on straight-line distance only, ignoring the road network",
+      "No reservation or locking, so two requests grab the same driver",
+      "Clients polling for match status and driver position",
+      "One global matching service/index instead of partitioning by geography",
+      "Searching only the rider's own cell and missing drivers just across a cell boundary"
+    ]
+  }
+}

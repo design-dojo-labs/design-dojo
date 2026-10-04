@@ -1,0 +1,185 @@
+{
+  "id": "food-ordering",
+  "title": "Food Delivery Ordering",
+  "summary": "Build carts from restaurant menus, place orders with a delivery-fee rule, drive orders through a role-checked lifecycle and assign the nearest free delivery agent.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "topics": [
+    "state-transitions",
+    "commerce",
+    "resource-allocation"
+  ],
+  "estimatedMinutes": 60,
+  "statement": "A food delivery startup is launching in one city. You are writing its order core: customers build a cart from a restaurant's menu and place an order; the restaurant and a delivery agent then move the order through its lifecycle.\n\n**Restaurants and menus**\nA restaurant has a name, a location (x, y on a city grid), an open/closed flag and a menu of items, each with a name, a price and an available flag. Restaurants can change prices, availability and their open flag at any time.\n\n**Cart**\n- Each customer has one cart, which holds items from a single restaurant only. Adding an item from a different restaurant is refused; the customer must clear the cart first.\n- Customers can add items, change quantities (1–20) and remove items. Only items that exist and are available can be added.\n\n**Placing an order**\n- An order can be placed when the cart is not empty, the restaurant is open and every item is still available. The customer gives a delivery location on the grid.\n- The order keeps the prices at the time it was placed; later menu changes do not affect it.\n- Total = item subtotal + delivery fee. The delivery fee is ₹30, waived when the subtotal is ₹300 or more.\n- Placing an order empties the cart.\n\n**Order lifecycle**\n- placed → accepted or rejected (by the restaurant)\n- accepted → preparing → ready for pickup (by the restaurant)\n- ready for pickup → picked up → delivered (by the assigned delivery agent)\n- The customer may cancel while the order is placed or accepted, but not once preparation has started.\n\nAny other transition, or a transition by the wrong party, is refused. Each order records when every transition happened.\n\n**Delivery agents**\n- Agents have a location and can go online or offline. Online agents without an active order are available.\n- When an order is accepted, it is assigned to the available agent nearest to the restaurant by grid (Manhattan) distance; ties go to the lower agent id. If no agent is available, the order waits, and waiting orders are assigned oldest first whenever an agent becomes available. An order can still be prepared while it waits, but cannot be picked up without an agent.\n- When an order is delivered, its agent becomes available at the delivery location. If an order is cancelled after assignment, its agent becomes available again where they are.\n- An agent with an active order cannot go offline.\n\nThe business expects to try other fee rules and smarter agent selection (for example by estimated arrival time) soon.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Register restaurants with a name, grid location, open flag and menu items (name, price in paise > 0, available flag), and allow prices, availability and the open flag to be changed.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Manage a customer's cart: add existing, available items with quantity 1–20, change quantities, remove items and clear the cart; adding an item from a restaurant other than the one already in the cart is refused.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Place an order from the cart with a delivery location: refuse an empty cart, a closed restaurant or any unavailable item (naming it, leaving the cart unchanged). The order keeps prices as placed; total = subtotal + 3000 paise delivery fee, waived when the subtotal is ≥ 30000 paise. The cart is emptied.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Move orders through the lifecycle in the statement, allowing each transition only from the right status and only by the right party (the order's restaurant, its assigned agent or its customer), recording the time of each transition. Everything else is refused without change.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "On acceptance assign the nearest available agent to the restaurant by Manhattan distance, ties to the lower agent id; if none is available the order waits, and waiting orders are assigned oldest first as soon as an agent becomes available.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "Let the customer cancel only while the order is placed or accepted; cancelling after assignment frees the agent at their current location, after which they may take the oldest waiting order.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-7",
+      "text": "Let agents go online and offline: offline agents are never assigned, an agent with an active order cannot go offline, and an agent coming online may immediately take the oldest waiting order. Delivered orders free their agent at the delivery location.",
+      "priority": "should"
+    },
+    {
+      "id": "FR-8",
+      "text": "Show an order's details (lines with snapshot prices, subtotal, fee, total, status, agent, transition times), a restaurant's active orders and a customer's orders, newest first.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library; JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no database, maps service, network or frameworks.",
+    "Money is integer paise: ₹30 = 3000 paise, ₹300 = 30000 paise.",
+    "Grid coordinates are integers from 0 to 1,000; transition times come from a clock tests can control.",
+    "Up to 1,000 restaurants, 5,000 agents and 100,000 orders."
+  ],
+  "assumptions": [
+    "One city; there is no search or discovery of restaurants.",
+    "Payment is cash on delivery and is not modelled.",
+    "Agents do not physically move in the model: they are at their last known location until a delivery or cancellation updates it.",
+    "Customers, restaurants and agents are identified by ids; there is no authentication beyond checking which party is acting."
+  ],
+  "examples": [
+    {
+      "title": "Cart and totals",
+      "scenario": "Dosa Point at (0, 0), open: Masala Dosa ₹120, Filter Coffee ₹40. Pizza Hub at (10, 10), open: Margherita ₹250. Customer C1 adds 2 Masala Dosa and 1 Filter Coffee from Dosa Point, then tries to add a Margherita.",
+      "expected": "Subtotal ₹280, delivery fee ₹30, total ₹310. The Margherita is refused because the cart holds Dosa Point items."
+    },
+    {
+      "title": "Assignment and price snapshot",
+      "scenario": "Agents online and free: A1 at (2, 3), A2 at (1, 1), A3 at (8, 9). C1 places order O1 (delivery to (3, 4)); Dosa Point accepts it; then Dosa Point raises Masala Dosa to ₹130.",
+      "expected": "O1 is assigned to A2 (distance 2; A1 is 5 and A3 is 17). O1's total stays ₹310."
+    },
+    {
+      "title": "Waiting for an agent",
+      "scenario": "C2 orders 3 Masala Dosa (now ₹130) from Dosa Point → O2, accepted. C3 orders 1 Margherita → O3, accepted. C4 orders 1 Margherita → O4, accepted. Then O2 is prepared, made ready, picked up and delivered by its agent.",
+      "expected": "O2: subtotal ₹390, fee waived, total ₹390; assigned to A1 (distance 5 vs A3’s 17). O3: ₹250 + ₹30 = ₹280; assigned to A3 (|8−10| + |9−10| = 3). O4 waits: no agent is available. When O2 is delivered, A1 becomes available at C2’s delivery location and O4 is assigned to A1."
+    },
+    {
+      "title": "Refused transitions",
+      "scenario": "Dosa Point marks O1 as preparing. Then C1 tries to cancel O1, Pizza Hub tries to mark O1 ready for pickup, and A3 tries to mark O1 picked up.",
+      "expected": "All three are refused and O1 stays preparing: cancellation is too late, Pizza Hub is not O1’s restaurant, and A3 is not O1’s agent (and O1 is not ready)."
+    }
+  ],
+  "edgeCases": [
+    "A subtotal of exactly ₹300 has no delivery fee; ₹299 pays ₹30.",
+    "An item becomes unavailable after being added to the cart: placing the order is refused naming that item and the cart is kept.",
+    "Ordering from a restaurant that has just closed is refused.",
+    "A quantity of 0 or 21 is refused.",
+    "A cancellation after assignment frees the agent, who is immediately assigned the oldest waiting order.",
+    "A restaurant rejects a placed order: no agent is assigned and the order is final.",
+    "An agent with an active order tries to go offline: refused.",
+    "Two available agents at equal distance from the restaurant: the lower agent id is chosen."
+  ],
+  "outOfScope": [
+    "Online payments, refunds and coupons.",
+    "Route planning, ETAs and live location tracking.",
+    "Ratings and reviews.",
+    "Restaurant discovery and search.",
+    "Persistence, REST APIs or any UI."
+  ],
+  "concurrency": {
+    "required": false,
+    "notes": "Not assessed. Operations may be assumed to arrive one at a time from a single thread."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "The four worked examples produce exactly the stated totals (₹310, ₹390, ₹280), assignments and refusals.",
+      "requirementIds": [
+        "FR-1",
+        "FR-2",
+        "FR-3",
+        "FR-4",
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "Cart rules are enforced: single restaurant, available items only, quantity 1–20.",
+      "requirementIds": [
+        "FR-2"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "The delivery fee applies below 30000 paise subtotal and is waived at or above it; later menu price changes never change a placed order.",
+      "requirementIds": [
+        "FR-3"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "Every transition outside the lifecycle, or by the wrong party, is refused and leaves the order unchanged; each allowed transition records its time.",
+      "requirementIds": [
+        "FR-4",
+        "FR-8"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Customer cancellation works only while placed or accepted, frees any assigned agent, and lets that agent take the oldest waiting order.",
+      "requirementIds": [
+        "FR-6",
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "Offline agents are never assigned, busy agents cannot go offline, and an agent coming online takes the oldest waiting order.",
+      "requirementIds": [
+        "FR-7",
+        "FR-5"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Estimate delivery time from grid distances (agent to restaurant, restaurant to customer) and a preparation time per restaurant, and show it on the order."
+    },
+    {
+      "id": "SG-2",
+      "text": "Let one agent carry up to two orders from the same restaurant when both are ready for pickup together."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-3 to FR-6 carry the weight: the price snapshot and fee rule, the transition table with the right party for each step, nearest-agent assignment with id tie-break, oldest-first assignment of waiting orders, and cancellation limits. Reproduce the worked totals and assignments exactly.",
+    "modeling": "Look for separate homes for restaurant and menu, cart, order (with its own lifecycle and line snapshots), agents and assignment. Lifecycle rules should live with the order rather than being spread across callers.",
+    "principles": "Order status should change only through operations that check the current status and the acting party in one place, and menu edits must not leak into placed orders. Concurrency is not assessed.",
+    "extensibility": "The statement names likely changes: new fee rules and a different agent-selection rule (e.g. by estimated arrival). Each should be a local change. Plain, direct code is acceptable; speculative frameworks earn no credit.",
+    "readability": "Allowed transitions and their acting parties should be readable in one place, and money should use paise with named constants for the fee and threshold.",
+    "edge_cases": "Check the fee threshold boundary, items becoming unavailable, closed restaurants, quantity limits, wrong-party transitions, late cancellation and agents going offline while busy.",
+    "tests": "Expect tests for cart restrictions, totals at the fee boundary, allowed and refused transitions, assignment tie-breaks and waiting orders being assigned when an agent frees up."
+  }
+}

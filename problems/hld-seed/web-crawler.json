@@ -1,0 +1,82 @@
+{
+  "id": "web-crawler",
+  "title": "Web Crawler for a Search Engine",
+  "summary": "Design a polite, fault-tolerant crawler that discovers and keeps fresh a billion web pages for a search engine's index while avoiding duplicates and crawler traps.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "domain": "search",
+  "estimatedMinutes": 60,
+  "statement": "A search engine team needs **a web crawler** that keeps a fresh copy of a large part of the public web for their indexing pipeline (indexing and ranking are owned by another team).\n\n**What the crawler must do**\n1. Start from a seed list of URLs, download pages, extract the links they contain and keep discovering new pages.\n2. Store the latest copy of each page's HTML plus metadata (URL, fetch time, HTTP status, content type, content hash) where the indexing pipeline can read it, and tell that pipeline about new or changed pages.\n3. Revisit pages so stored copies stay fresh. News sites and homepages change hourly; most other pages rarely change.\n4. Let operators add seeds, block domains, see crawl progress per domain and pause the crawl.\n\n**Clarifications from the interviewer**\n- Be a good citizen: obey `robots.txt` (including any crawl-delay), send at most 1 request per second to any single host by default, and identify the crawler with a clear user agent.\n- The same page is often reachable through many URLs (tracking parameters, `http` vs `https`, trailing slashes), and many sites copy each other's content; avoid storing and re-indexing the same content over and over.\n- Some sites generate infinite URL spaces (calendars with endless \"next month\" links, session ids in URLs); the crawler must not get stuck in them.\n- Only HTML pages matter; ignore images, videos and other binary content.\n- The crawl runs continuously and machines crash or get redeployed; progress must not be lost and no host may be hammered as a side effect.\n- Some hosts are huge (millions of pages) and some are slow or time out.\n\nCover requirements, estimates, interfaces, data model and architecture, then dive into what you think is hardest at this scale.",
+  "scaleHints": [
+    "Target corpus of 1B pages, each refreshed on average every 2 weeks → ~71M fetches/day (~830/s sustained; plan for 1,500/s)",
+    "Average page is 100 KB of HTML (~20 KB compressed); only the latest copy is kept → ~20 TB stored",
+    "~50M distinct hosts with heavy skew; the largest hosts have 10M+ pages",
+    "Each page links to ~50 others → billions of discovered links per day, most of them already known",
+    "Outbound bandwidth budget of 2 Gbps"
+  ],
+  "constraints": [
+    "Politeness rules are non-negotiable: robots.txt, crawl-delay and the per-host request cap",
+    "Crawl state must survive machine failures without losing discovered URLs or restarting the crawl",
+    "robots.txt must be re-checked at least once a day per host",
+    "Duplicate content should not be stored or sent to indexing more than once"
+  ],
+  "outOfScope": [
+    "Indexing, ranking and serving search results",
+    "Rendering JavaScript-heavy pages in a headless browser",
+    "Crawling images, video or pages behind logins",
+    "Spam and malware classification"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Fetch pages from a frontier, parse HTML, extract and normalise links, enqueue new URLs",
+      "Respect robots.txt, crawl-delay and per-host rate limits",
+      "URL-level dedup (normalisation + seen set) and content-level dedup (exact and near-duplicate fingerprints)",
+      "Store the latest page content and metadata and notify the indexing pipeline",
+      "Recrawl scheduling based on change frequency and importance",
+      "Operator controls: seeds, blocklists, pause, per-domain progress"
+    ],
+    "keyNonFunctionalRequirements": [
+      "~830 fetches/s sustained (1,500/s headroom) within a 2 Gbps budget",
+      "Politeness guaranteed even with many parallel workers",
+      "Fault tolerance: durable frontier and crawl state; resume after crashes",
+      "Seen-URL set that scales to tens of billions of URLs",
+      "Freshness: hot pages roughly hourly, ~2 weeks on average"
+    ],
+    "coreEntities": [
+      "URL record: url_hash, normalised_url, host, priority, last_fetched_at, next_fetch_at, change_rate, status, etag/last_modified",
+      "Host record: host, robots rules, robots_fetched_at, crawl_delay, next_allowed_fetch_at, resolved IP",
+      "Page content: url_hash, content_hash/simhash, storage_ref, fetched_at, http_status",
+      "Frontier entry: priority, host queue, url, scheduled time",
+      "Seen-URL set and content-fingerprint set"
+    ],
+    "keyComponents": [
+      "URL frontier with priority front queues and per-host back queues for politeness (Mercator-style)",
+      "Work partitioning by host hash so each host's rate limit is enforced in exactly one place",
+      "Asynchronous fetcher workers with timeouts and a DNS cache",
+      "robots.txt fetcher and cache",
+      "Parser/link extractor with URL normaliser and trap heuristics",
+      "Seen-URL filter (Bloom filter in front of a persistent store) and content fingerprinting",
+      "Blob storage for page content plus a metadata store",
+      "Recrawl scheduler and an event feed to the indexing pipeline"
+    ],
+    "deepDiveTopics": [
+      "Frontier design: balancing priority and politeness, per-host queues, back-off on errors, persisting the frontier",
+      "URL dedup at billions scale: Bloom filter sizing and false positives vs disk-backed key-value sets",
+      "Content dedup: exact hashes vs SimHash/MinHash for near-duplicates",
+      "Recrawl scheduling: estimating change rates, conditional GETs (ETag / If-Modified-Since)",
+      "Partitioning across crawler nodes by host and rebalancing when nodes fail",
+      "Trap detection: URL depth/length limits, per-host page budgets, repeating-pattern detection"
+    ],
+    "commonPitfalls": [
+      "One global FIFO queue that floods a single host with requests",
+      "Ignoring robots.txt, or enforcing per-host limits only within each worker",
+      "Deduplicating raw URL strings without normalisation",
+      "Keeping the whole seen-URL set in one machine's memory without sizing it",
+      "Blocking one-request-per-thread fetchers and no DNS caching",
+      "No defence against infinite URL spaces"
+    ]
+  }
+}

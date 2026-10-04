@@ -1,0 +1,79 @@
+{
+  "id": "distributed-rate-limiter",
+  "title": "Distributed API Rate Limiter",
+  "summary": "Design rate limiting for a public API's gateway fleet so that per-key, per-user and per-IP limits hold globally across hundreds of nodes while adding almost no latency.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "domain": "infrastructure",
+  "estimatedMinutes": 50,
+  "statement": "A company runs **a public developer API** (think of a payments or messaging API that thousands of businesses integrate with). Every request passes through a fleet of about 200 API gateway nodes spread over 3 regions. You are asked to design the rate-limiting capability for that fleet.\n\n**Who is involved**\n- *API customers* call the API with an API key. Each key belongs to a plan: Free (100 requests/minute), Pro (10,000 requests/minute) or Enterprise (custom limits, some above 50,000 requests/second).\n- *Platform engineers* define and change rules without redeploying gateways, for example \"at most 5 login attempts per minute per IP\", \"at most 20 requests/second to `POST /refunds` per key\" or \"at most 1,000 requests/second per key per region\".\n- *Support staff* temporarily raise or lower one customer's limit during an incident.\n\n**Core journeys**\n1. On every request, the gateway decides \"allow\" or \"reject\" according to all rules that apply (per key, per user, per IP, per endpoint).\n2. Rejected requests get HTTP 429 with a `Retry-After` header; every response carries headers showing the limit, the remaining requests and the reset time.\n3. Short bursts above the steady rate are allowed up to a configured burst size.\n4. Engineers can see, per key and per rule, how often limits are being hit.\n\n**Clarifications from the interviewer**\n- A client's requests land on many gateway nodes and possibly several regions, yet a limit applies to the client's total traffic, not to each node.\n- A small overshoot is acceptable; a client getting twice its limit is not.\n- If the rate-limiting capability itself is in trouble, ordinary API traffic should keep flowing — but the login-attempt rule exists to stop credential stuffing and must not be silently switched off.\n- Gateways already authenticate the API key before the rate-limit decision is made.\n\nCover requirements, estimates, interfaces (the admin API and the check performed on each request), data model and architecture, then dive into algorithms, accuracy and failure handling.",
+  "scaleHints": [
+    "~1M requests/s at peak across ~200 gateway nodes in 3 regions",
+    "5M API keys exist; ~500K are active in any given minute",
+    "The largest enterprise keys send 50K+ requests/s; most keys send under 1 request/s",
+    "The rate-limit decision may add at most 5 ms at p99 (ideally under 1 ms) to each request",
+    "Cross-region round trip is 80–150 ms; rule changes should take effect within 30 s"
+  ],
+  "constraints": [
+    "Overshoot should stay within ~10% of the configured limit in steady state",
+    "API traffic keeps flowing if the limiter's shared state is unavailable, except for security rules such as login attempts",
+    "The rate limiter must not become a single point of failure for the gateway fleet",
+    "Memory and cost should scale with active keys, not with all 5M registered keys"
+  ],
+  "outOfScope": [
+    "Network-layer (L3/L4) DDoS protection and WAF rules",
+    "Authentication and API key issuance",
+    "Usage-based billing and monthly quotas",
+    "Gateway routing and request transformation"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Evaluate every applicable rule (key, user, IP, endpoint, region) per request and return allow/deny",
+      "Rules and per-customer overrides managed through an admin API and propagated without deploys",
+      "Burst capacity in addition to a steady rate",
+      "429 responses with Retry-After plus limit/remaining/reset headers on every response",
+      "Metrics on throttled requests per key and per rule"
+    ],
+    "keyNonFunctionalRequirements": [
+      "Added latency p99 < 5 ms at ~1M checks/s",
+      "Global accuracy within ~10% across 200 nodes and 3 regions",
+      "Highly available, with explicit fail-open/fail-closed behaviour per rule",
+      "Horizontal scalability and hot-key handling for 50K+ req/s keys",
+      "Rule propagation within 30 s"
+    ],
+    "coreEntities": [
+      "Rule: rule_id, scope (key/user/ip/endpoint), match criteria, algorithm, limit, window, burst, region scope, fail_mode",
+      "Override: api_key, rule_id or plan, custom limit, expires_at, created_by",
+      "Counter/bucket state: (rule_id, subject, window) → count or tokens + last_refill_ts, with TTL",
+      "Plan: plan_id, default limits",
+      "Throttle metric: rule_id, subject, time bucket, allowed/denied counts"
+    ],
+    "keyComponents": [
+      "Rate-limit check inside the gateway (library or sidecar) evaluating applicable rules",
+      "Rules/config service with admin API and versioned rules, pushed to or polled by gateways and cached locally",
+      "Shared low-latency counter store, partitioned by subject and replicated",
+      "Atomic check-and-update on counters (server-side script or compare-and-set)",
+      "Local per-node buckets or token leases for high-volume keys, synced periodically with shared state",
+      "Metrics pipeline for throttle decisions and dashboards",
+      "Fallback/circuit-breaker logic for when the counter store is slow or unavailable"
+    ],
+    "deepDiveTopics": [
+      "Algorithms: token bucket vs leaky bucket vs fixed window vs sliding-window log vs sliding-window counter — memory, accuracy, bursts",
+      "Atomicity and races when many nodes update the same counter concurrently",
+      "Hot keys at 50K+ req/s: pre-allocating tokens to nodes, batched sync, bounded overshoot",
+      "Multi-region limits: global vs per-region budgets, asynchronous replication, splitting quota between regions",
+      "Failure modes: fail-open vs fail-closed per rule, timeouts, degrading to local-only limiting"
+    ],
+    "commonPitfalls": [
+      "Purely per-node in-memory limits, letting a client reach up to 200× its limit",
+      "Non-atomic read-then-write counter updates that lose increments under concurrency",
+      "Fixed windows that allow 2× bursts at window boundaries without acknowledging it",
+      "A synchronous cross-region call on every request, blowing the latency budget",
+      "Sliding-window logs that store every timestamp for high-limit keys",
+      "No plan for when the counter store is down"
+    ]
+  }
+}

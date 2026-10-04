@@ -1,0 +1,175 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --color-canvas: var(--c-canvas);
+  --color-panel: var(--c-panel);
+  --color-sunken: var(--c-sunken);
+  --color-raised: var(--c-raised);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-ink: var(--c-ink);
+  --color-muted: var(--c-muted);
+  --color-faint: var(--c-faint);
+  --color-accent: var(--c-accent);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-ok: var(--c-ok);
+  --color-ok-soft: var(--c-ok-soft);
+  --color-err: var(--c-err);
+  --color-err-soft: var(--c-err-soft);
+  --color-warn: var(--c-warn);
+  --color-focus: var(--c-focus);
+  --color-select: var(--c-select);
+  --color-series: var(--c-series);
+}
+
+/* Light: cool drafting paper. */
+:root {
+  --c-canvas: #f5f7f4;
+  --c-panel: #ffffff;
+  --c-sunken: #eceeea;
+  --c-raised: #ffffff;
+  --c-line: #dce1dc;
+  --c-line-strong: #c3cbc5;
+  --c-ink: #1e2826;
+  --c-muted: #56655f;
+  --c-faint: #84918c;
+  --c-accent: #9a6614;
+  --c-accent-soft: #f4e7cd;
+  --c-ok: #2c7f60;
+  --c-ok-soft: #dcefe6;
+  --c-err: #b8402f;
+  --c-err-soft: #f6dfda;
+  --c-warn: #9a6614;
+  --c-focus: #2c6e8f;
+  --c-select: #e3ece8;
+  --c-series: #1d6fb8;
+  color-scheme: light;
+}
+
+/* Dark: graphite with a green cast, drafting-pencil ochre for time and attention. */
+.dark {
+  --c-canvas: #1a2120;
+  --c-panel: #212a29;
+  --c-sunken: #161c1b;
+  --c-raised: #27312f;
+  --c-line: #2f3b39;
+  --c-line-strong: #40504d;
+  --c-ink: #dce5e1;
+  --c-muted: #93a49f;
+  --c-faint: #6b7c77;
+  --c-accent: #d9a441;
+  --c-accent-soft: #3a3322;
+  --c-ok: #62b99b;
+  --c-ok-soft: #1f3a31;
+  --c-err: #e2705e;
+  --c-err-soft: #45261f;
+  --c-warn: #d9a441;
+  --c-focus: #7fb8d4;
+  --c-select: #2c3a37;
+  --c-series: #4a95d8;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--c-canvas);
+  color: var(--c-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss02";
+}
+:focus-visible {
+  outline: 2px solid var(--c-focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+::selection {
+  background: color-mix(in srgb, var(--c-focus) 35%, transparent);
+}
+/* Resize handles */
+[data-panel-resize-handle-id] {
+  background: var(--c-line);
+  transition: background 120ms;
+}
+[data-panel-resize-handle-id][data-resize-handle-state="hover"],
+[data-panel-resize-handle-id][data-resize-handle-state="drag"] {
+  background: var(--c-focus);
+}
+/* Markdown */
+.prose-studio p {
+  margin: 0 0 0.6em;
+}
+.prose-studio ul,
+.prose-studio ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.2em;
+}
+.prose-studio ul {
+  list-style: disc;
+}
+.prose-studio ol {
+  list-style: decimal;
+}
+.prose-studio li {
+  margin: 0.15em 0;
+}
+.prose-studio strong {
+  font-weight: 600;
+}
+.prose-studio code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--c-sunken);
+  padding: 0.05em 0.3em;
+  border-radius: 3px;
+}
+.prose-studio pre {
+  background: var(--c-sunken);
+  border: 1px solid var(--c-line);
+  padding: 0.6em 0.8em;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0 0 0.6em;
+}
+.prose-studio pre code {
+  background: none;
+  padding: 0;
+}
+.prose-studio h1,
+.prose-studio h2,
+.prose-studio h3,
+.prose-studio h4 {
+  font-weight: 600;
+  margin: 0.8em 0 0.35em;
+}
+.prose-studio a {
+  color: var(--c-focus);
+  text-decoration: underline;
+}
+.finding-highlight {
+  background: color-mix(in srgb, var(--c-accent) 22%, transparent);
+}
+.finding-glyph {
+  background: var(--c-accent);
+  width: 3px !important;
+  margin-left: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

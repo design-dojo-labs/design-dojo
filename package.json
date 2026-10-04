@@ -1,0 +1,40 @@
+{
+  "name": "lld-practice-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local single-user studio for practicing Low-Level Design (Java machine coding) and High-Level Design (system design) interviews.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "workspaces": [
+    "shared",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "start": "node scripts/start.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build -w web",
+    "typecheck": "tsc -p shared && tsc -p server && tsc -p web",
+    "test": "vitest run",
+    "test:java": "LLD_TEST_JAVA=1 vitest run server/test/java-runner.test.ts",
+    "test:e2e": "playwright test",
+    "validate:problems": "tsx scripts/validate-problems.ts && tsx scripts/validate-hld-problems.ts",
+    "package:python": "node scripts/package-python.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.5",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "overrides": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  }
+}

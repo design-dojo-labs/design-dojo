@@ -1,0 +1,181 @@
+{
+  "id": "notification-routing",
+  "title": "Notification Routing",
+  "summary": "Decide how, when and whether each notification reaches a user: channel preferences per category, opt-outs, quiet hours with deferral, and retries with channel fallback.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "topics": [
+    "notifications",
+    "rules-and-policies",
+    "scheduling"
+  ],
+  "estimatedMinutes": 60,
+  "statement": "A fintech app sends its users login alerts, order updates and offers. Today every team sends email directly, so users get offers at 2 a.m. and miss security alerts when email fails. You are writing the in-process routing component that decides how, when and whether each notification reaches a user.\n\n**Users and preferences**\n- Each user has contact details for zero or more channels: email, SMS and push.\n- For each notification category — security, transactional and marketing — a user has an ordered list of preferred channels, for example transactional: push, then SMS.\n- Users can opt out of the marketing and transactional categories. Security notifications cannot be opted out of.\n- Users may set daily quiet hours, for example 22:00–07:00; the window may cross midnight. The start time is inside the window, the end time is not.\n\n**Notifications**\nA notification has a unique id, a user, a category, a priority (critical, high, normal or low) and a message.\n\n**Routing rules**, applied in this order:\n1. If the user has opted out of the category, the notification is suppressed: nothing is sent.\n2. If it arrives during the user's quiet hours and is not critical, it is deferred until the quiet hours end.\n3. Otherwise it is sent through the user's preferred channels for its category, in order. A channel for which the user has no contact details is skipped. Each channel is tried up to 3 times; the first success ends delivery. When all attempts on a channel fail, the next channel is tried. If every channel fails or is skipped, the notification has failed.\n\n**Deferred notifications**\nThe host application periodically asks the component to release notifications whose deferral has ended. Due notifications are released highest priority first, and in arrival order within a priority, and are then routed using the user's preferences at release time — so an opt-out made overnight suppresses a deferred offer.\n\n**Status**\nFor each notification the component reports its status (delivered, deferred, suppressed or failed), the channel that delivered it, and every attempt made: channel, attempt number and outcome.\n\nActual sending is outside your program: for each channel, sending a message is an operation that either succeeds or fails, and tests must be able to make a channel fail on demand. The current time must be controllable in tests. Product has already asked about adding WhatsApp as a channel and a daily cap on marketing messages.",
+  "requirements": [
+    {
+      "id": "FR-1",
+      "text": "Register users with contact details per channel and, per category, an ordered list of preferred channels; allow preferences, quiet hours and opt-outs to be changed later. Opting out of security is rejected, as are quiet hours whose start equals their end.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-2",
+      "text": "Submit a notification (id, user, category, priority, message) and apply the routing rules in order — opt-out, quiet hours, then delivery — returning the resulting status. Unknown users are rejected.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-3",
+      "text": "Deliver through the preferred channels in order: skip channels without contact details, try each channel up to 3 times, stop at the first success, move to the next channel after 3 failures, and mark the notification failed if no channel succeeds (including when the list is empty).",
+      "priority": "must"
+    },
+    {
+      "id": "FR-4",
+      "text": "Defer non-critical notifications that arrive during the user's quiet hours until the next end of the window (start inclusive, end exclusive, windows may cross midnight). Critical notifications are never deferred.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-5",
+      "text": "Release deferred notifications that are due as of a given time: highest priority first (critical, high, normal, low), arrival order within a priority, each routed with the user's preferences and opt-outs as they are at release time. Notifications not yet due stay deferred.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-6",
+      "text": "Suppress notifications in a category the user has opted out of: status suppressed, no attempts made.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-7",
+      "text": "Report a notification's status, delivering channel (if any) and its attempt log in order: channel, attempt number on that channel, success or failure.",
+      "priority": "must"
+    },
+    {
+      "id": "FR-8",
+      "text": "Submitting a notification id that was already submitted has no effect: no new attempts are made and the existing status is returned.",
+      "priority": "should"
+    }
+  ],
+  "constraints": [
+    "Java 17 or later using only the standard library; JUnit 5 may be used for tests.",
+    "Single JVM process with all state in memory; no message brokers, provider SDKs, network or frameworks.",
+    "Times are wall-clock times in one time zone shared by all users; minute precision is enough for quiet hours.",
+    "Retries happen immediately one after another; there is no delay between attempts.",
+    "Up to 100,000 users and 1,000,000 notifications."
+  ],
+  "assumptions": [
+    "Sending through a channel is synchronous and reports success or failure; there is no partial delivery.",
+    "The services that submit notifications are trusted and supply valid categories and priorities.",
+    "The host application calls the release operation often enough; the component does not run its own background thread."
+  ],
+  "examples": [
+    {
+      "title": "Retry, then success",
+      "scenario": "User U1 has email, phone and push token. Preferences: security [SMS, email]; transactional [push, SMS]; marketing [email]. Quiet hours 22:00–07:00. At 10:00, N1 (transactional, high) is submitted; push fails twice, then succeeds.",
+      "expected": "N1 is delivered via push after 3 attempts: push #1 failed, push #2 failed, push #3 succeeded. SMS is not tried."
+    },
+    {
+      "title": "Fallback to the next channel",
+      "scenario": "At 10:05, N2 (transactional, normal) is submitted; push fails every time and SMS succeeds.",
+      "expected": "N2 is delivered via SMS with 4 attempts logged: push #1–#3 failed, SMS #1 succeeded."
+    },
+    {
+      "title": "Quiet hours",
+      "scenario": "At 23:00 N3 (marketing, low) arrives; at 23:10 N4 (security, critical); at 23:20 N5 (transactional, high). The host releases due notifications at 06:59 and again at 07:00 the next morning; every channel succeeds.",
+      "expected": "N3 and N5 are deferred until 07:00. N4 is sent immediately via SMS despite quiet hours. The 06:59 release sends nothing. The 07:00 release sends N5 first (high, via push) and then N3 (low, via email)."
+    },
+    {
+      "title": "Opt-outs",
+      "scenario": "At 12:00 U1 opts out of marketing and N6 (marketing, normal) arrives; then U1 tries to opt out of security.",
+      "expected": "N6 is suppressed with zero attempts. The security opt-out is rejected and U1 keeps receiving security notifications."
+    }
+  ],
+  "edgeCases": [
+    "With quiet hours 22:00–07:00: a notification at 21:59 is sent, at 22:00 deferred, at 07:00 sent immediately.",
+    "A notification at 23:30 is deferred to 07:00 the next day; one at 06:30 is deferred to 07:00 the same day.",
+    "Quiet hours that do not cross midnight (13:00–14:00) work the same way.",
+    "A user opts out of marketing while an offer is deferred: at release it is suppressed without attempts.",
+    "A preferred channel with no contact details is skipped without counting attempts; if all are skipped the notification fails with zero attempts.",
+    "The same notification id is submitted twice: the second submission changes nothing.",
+    "Release is called when nothing is due: nothing happens."
+  ],
+  "outOfScope": [
+    "Real email, SMS or push providers.",
+    "Message templates, localisation and formatting.",
+    "Read receipts and delivery confirmations sent back by providers.",
+    "Persistence, REST APIs or any UI.",
+    "Per-user time zones."
+  ],
+  "concurrency": {
+    "required": false,
+    "notes": "Not assessed. Submissions and releases may be assumed to arrive one at a time from a single thread; the host application triggers releases."
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": "The first two examples produce exactly the stated attempt logs, delivering channels and statuses.",
+      "requirementIds": [
+        "FR-2",
+        "FR-3",
+        "FR-7"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "text": "Quiet-hour boundaries behave as in the edge cases (start inclusive, end exclusive, midnight crossing) and critical notifications bypass quiet hours.",
+      "requirementIds": [
+        "FR-4"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "text": "A release sends only due notifications, ordered by priority then arrival, as in the third example.",
+      "requirementIds": [
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "text": "Opted-out categories are suppressed with no attempts, both at submission and at release time; opting out of security is rejected.",
+      "requirementIds": [
+        "FR-6",
+        "FR-1",
+        "FR-5"
+      ]
+    },
+    {
+      "id": "AC-5",
+      "text": "Channels without contact details are skipped, and a notification whose channels all fail or are skipped is marked failed with the complete attempt log.",
+      "requirementIds": [
+        "FR-3",
+        "FR-7"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "text": "Resubmitting an existing notification id makes no new attempts and returns the existing status.",
+      "requirementIds": [
+        "FR-8"
+      ]
+    }
+  ],
+  "stretchGoals": [
+    {
+      "id": "SG-1",
+      "text": "Cap marketing notifications at 2 delivered per user per calendar day; extras are suppressed."
+    },
+    {
+      "id": "SG-2",
+      "text": "Wait between retries with an increasing delay (for example 1, 2, 4 minutes) instead of retrying immediately."
+    }
+  ],
+  "rubricGuidance": {
+    "correctness": "FR-2 to FR-6 carry the weight: rule order (opt-out, quiet hours, delivery), 3 attempts per channel with fallback, midnight-crossing quiet hours with an exclusive end, and priority-ordered release using preferences at release time. Check the attempt logs in the examples exactly.",
+    "modeling": "Expect clear responsibilities for user preferences, the decision of whether and when to send, delivery with retries and fallback, and the record of attempts. Channel-specific sending should be separate from routing decisions.",
+    "principles": "Routing should depend on channel sending only through a narrow seam that tests can make fail, and attempt logs should not be editable from outside. Concurrency is not assessed (releases are triggered by the host).",
+    "extensibility": "The statement names likely changes: a new channel (WhatsApp) and new rules such as a daily marketing cap. Adding a channel should not require editing routing rules. A few focused types are enough; do not reward speculative frameworks.",
+    "readability": "The routing decision should read like the numbered rules in the statement, and quiet-hours time arithmetic should be isolated and clearly named.",
+    "edge_cases": "Look for quiet-hour boundaries and midnight wrap, missing contact details, empty preference lists, duplicate ids, opt-outs applied at release, and the security opt-out refusal.",
+    "tests": "Tests should script channel failures to verify attempt counts and fallback, cover quiet-hour boundaries with a controlled clock, and check release ordering by priority."
+  }
+}

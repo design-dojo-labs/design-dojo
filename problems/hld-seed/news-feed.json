@@ -1,0 +1,82 @@
+{
+  "id": "news-feed",
+  "title": "Social News Feed",
+  "summary": "Design the home timeline of a social network where users follow accounts and see their recent posts newest first — including accounts with tens of millions of followers.",
+  "difficulty": "medium",
+  "targets": [
+    "sde1",
+    "sde2"
+  ],
+  "domain": "social",
+  "estimatedMinutes": 55,
+  "statement": "You are designing **the home feed of a social network**. People publish short posts (up to 500 characters of text plus up to 4 photos) and follow other accounts. Following is one-directional: you can follow a celebrity without them following you back.\n\n**Core journeys**\n1. **Post** — a user publishes a post; it shows at the top of their own profile immediately.\n2. **Home feed** — a user opens the app and sees posts from the accounts they follow, newest first, 20 at a time, and can keep scrolling back through older posts. Pull-to-refresh shows anything new since the last load.\n3. **Follow / unfollow** — following someone makes their recent posts show up in your feed soon after; unfollowing removes them.\n4. **Engagement** — every post in the feed shows its like count and comment count, and users can like or unlike posts.\n5. **Delete** — an author can delete a post; it should vanish from everybody's feed shortly afterwards.\n\n**Clarifications from the interviewer**\n- Ordering is reverse-chronological; no machine-learned ranking for this exercise.\n- Most accounts have a few hundred followers, but some athletes, musicians and news outlets have 10–100 million followers and post several times a day.\n- A user follows about 200 accounts on average (hard cap: 5,000).\n- Many registered users open the app only once a month or less.\n- If you block someone, you must never see their posts in your feed.\n- Like and comment counts may be a few seconds stale, but your own like must show immediately for you.\n\nWalk through requirements, estimates, API, data model and architecture, and explain the trade-offs behind how a new post reaches its followers' feeds.",
+  "scaleHints": [
+    "500M monthly active users, 200M daily active users",
+    "Each DAU loads the feed ~10 times a day → ~2B feed loads/day (~23K/s on average, ~70K/s at peak)",
+    "~20M new posts per day (~230/s on average, ~1K/s at peak); 30% include photos averaging 300 KB each",
+    "Average 200 followees per user; follower counts are heavily skewed, up to 100M for the largest accounts",
+    "First feed page p99 under 300 ms; new posts appear in followers' feeds within 10 s (within 1 minute for the largest accounts)"
+  ],
+  "constraints": [
+    "Feeds may be eventually consistent, but authors must see their own posts immediately",
+    "Deleted posts and posts from blocked accounts must disappear from feeds within 1 minute",
+    "Feed availability (99.95%) matters more than perfect freshness — a slightly stale feed beats an error",
+    "Infinite scroll must not repeat or skip posts when new posts arrive while the user is scrolling"
+  ],
+  "outOfScope": [
+    "Ranking/recommendation models, ads and suggested posts",
+    "Comment threads themselves (only counts appear in the feed)",
+    "Direct messages, stories, video and search",
+    "Notifications about likes or new followers"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Create and delete posts (text plus up to 4 photos)",
+      "Follow/unfollow on an asymmetric graph",
+      "Home feed: reverse-chronological posts from followees with cursor pagination and refresh for newer posts",
+      "Like/unlike with counts shown on feed items",
+      "Filter blocked accounts and deleted posts",
+      "Author's own posts visible immediately on profile and feed"
+    ],
+    "keyNonFunctionalRequirements": [
+      "Read-heavy: ~70K feed loads/s at peak vs ~1K posts/s — optimise the read path",
+      "Feed p99 < 300 ms; post visible to followers within 10 s (1 min for the largest accounts)",
+      "Highly available, eventually consistent feeds with read-your-own-writes for authors",
+      "Handle 100M-follower accounts without write storms",
+      "Storage-efficient timelines (ids, not post copies) for 200M active users"
+    ],
+    "coreEntities": [
+      "User: user_id, handle, profile, follower_count, following_count, high-fanout flag",
+      "Post: post_id (time-sortable), author_id, text, media_refs, created_at, deleted",
+      "Follow: follower_id, followee_id, created_at — indexed in both directions",
+      "Timeline entry: user_id → bounded list of (post_id, author_id) for active users",
+      "Like: post_id, user_id, created_at; PostCounters: post_id, like_count, comment_count",
+      "Block: blocker_id, blocked_id"
+    ],
+    "keyComponents": [
+      "Post service that persists posts and emits post-created/deleted events",
+      "Social graph service answering 'who follows X' and 'whom does Y follow' at scale",
+      "Fan-out workers that push post ids into followers' precomputed timelines",
+      "Timeline store/cache holding the newest few hundred post ids per active user",
+      "Feed service merging the precomputed timeline with on-demand pulls from high-fanout accounts, then hydrating posts",
+      "Hydration caches for post bodies, counters and author profiles",
+      "Object storage plus edge caching for photos",
+      "Counter service for likes/comments with asynchronous aggregation"
+    ],
+    "deepDiveTopics": [
+      "Fan-out on write vs on read vs hybrid: the follower threshold for celebrities and merging at read time",
+      "Timeline sizing: e.g. 200M users × 800 ids × 8 bytes ≈ 1.3 TB, kept only for active users; rebuilding feeds for returning users",
+      "Cursor pagination with time-sortable post ids so new posts don't shift pages",
+      "Deletes, unfollows and blocks: lazy filtering at read time vs eager removal from timelines",
+      "Counters for hot posts: sharded counters, batching likes, caching counts"
+    ],
+    "commonPitfalls": [
+      "Pure fan-out on write: one 100M-follower post triggers 100M timeline writes",
+      "Pure fan-out on read: querying ~200 followees and merging on every load at 70K/s",
+      "Offset-based pagination that repeats or skips posts as new ones arrive",
+      "Copying full post bodies into every timeline instead of ids",
+      "Fanning out to inactive users' timelines, wasting most of the work",
+      "Forgetting read-your-own-writes, so authors don't see their own post"
+    ]
+  }
+}

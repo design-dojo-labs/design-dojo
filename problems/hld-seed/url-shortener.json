@@ -1,0 +1,81 @@
+{
+  "id": "url-shortener",
+  "title": "URL Shortener",
+  "summary": "Design a public link-shortening service that turns long URLs into short codes, redirects billions of clicks a month with very low latency, and reports click counts to link owners.",
+  "difficulty": "easy",
+  "targets": [
+    "beginner",
+    "sde1"
+  ],
+  "domain": "infrastructure",
+  "estimatedMinutes": 40,
+  "statement": "You are designing **a public URL-shortening service** — the kind of short links people put in social posts, SMS campaigns and printed QR codes.\n\n**Users**\n- *Anyone* can paste a long URL and get back a short link such as `https://sho.rt/aZ3kQ9x`.\n- *Registered users* can also pick a custom alias (`sho.rt/summer-sale`), set an expiry date, list the links they created, disable a link and see how many times each link was clicked.\n- *Visitors* simply open a short link and expect to land on the destination page almost instantly.\n\n**Core journeys**\n1. **Shorten** — submit a long URL (up to 2,048 characters), optionally with a custom alias and an expiry, and receive the short link.\n2. **Redirect** — opening a short link sends the browser to the original URL. Expired, disabled or unknown codes show a \"link not found\" page.\n3. **Stats** — the owner sees total clicks per link and clicks per day for the last 30 days. Counts may lag by a few minutes.\n\n**Clarifications from the interviewer**\n- Generated codes are at most 7 characters from `[A-Za-z0-9]`. Custom aliases are 4–30 characters and are first come, first served.\n- Codes must not be predictable: nobody should be able to walk through every link by incrementing a code.\n- Shortening the same long URL twice may return two different short links; that is fine.\n- A link's destination cannot be edited after creation — owners can only disable or delete it.\n- Links without an explicit expiry live for 5 years.\n- Redirect traffic is extremely skewed: a link shared by a celebrity can receive thousands of clicks per second for an hour, while most links are clicked only a handful of times ever.\n\nWalk through requirements, estimates, APIs, the data model and a high-level architecture, then go deep on the parts you think are hardest.",
+  "scaleHints": [
+    "100M new short links per month (~40 creations/s on average, ~200/s at peak)",
+    "Read:write ratio about 100:1 → ~10B redirects per month (~4K/s on average, ~20K/s at peak); a single viral link can reach 10K/s on its own",
+    "Links live 5 years by default → plan for ~6B stored links at roughly 500 bytes each (~3 TB)",
+    "Redirect p99 latency under 50 ms measured at our servers; link creation p99 under 300 ms",
+    "Click statistics may lag real time by up to 5 minutes"
+  ],
+  "constraints": [
+    "Redirects must be highly available (99.99%); link creation can tolerate slightly lower availability (99.9%)",
+    "A short code, once issued, is never reassigned to a different destination — not even after the link expires",
+    "Two different links must never end up with the same code or alias, even when created at the same instant",
+    "Generated codes must not be sequential or otherwise enumerable"
+  ],
+  "outOfScope": [
+    "Detecting malicious or phishing destination URLs",
+    "Detailed analytics beyond click counts (geography, referrers, devices)",
+    "Billing, paid plans and team accounts",
+    "Link previews and QR code generation"
+  ],
+  "evaluationGuide": {
+    "keyFunctionalRequirements": [
+      "Create a short link for a long URL and return it; validate the URL format and length",
+      "Optional custom alias with an atomic uniqueness check that rejects taken aliases",
+      "Redirect a code to its destination with an HTTP redirect; 404 page for unknown, expired or disabled codes",
+      "Optional per-link expiry with a 5-year default lifetime",
+      "Owners can list (paginated), disable and delete their links",
+      "Per-link click counts (total and daily for 30 days) with a few minutes of lag acceptable"
+    ],
+    "keyNonFunctionalRequirements": [
+      "Very low redirect latency (p99 < 50 ms server-side) — every click waits on it",
+      "Redirect availability of 99.99%; the read path matters more than the write path",
+      "Read-heavy (~100:1): ~20K redirects/s at peak plus hot-key spikes on viral links",
+      "Durability: a created mapping is never lost or silently changed",
+      "Code uniqueness under concurrent creation and non-enumerable codes",
+      "~6B links (~3 TB) growing linearly; analytics must never slow down redirects"
+    ],
+    "coreEntities": [
+      "Link: short_code (PK), long_url, owner_id (nullable), created_at, expires_at, status (active/disabled/deleted)",
+      "User: user_id, email, credentials, created_at",
+      "ClickEvent (transient): short_code, timestamp — consumed by the stats pipeline, not stored per click long-term",
+      "LinkDailyStats: short_code, date, click_count — pre-aggregated for the owner dashboard",
+      "Code range allocation (if counter-based): range_start, range_end, assigned_node"
+    ],
+    "keyComponents": [
+      "Stateless API service for creating and managing links, horizontally scaled",
+      "Redirect path kept lean and isolated from (or prioritised over) management APIs",
+      "Short-code generator: pre-allocated counter ranges plus scrambling, or random codes with insert-if-absent",
+      "Key-value style mapping store (code → URL), partitioned by code and replicated",
+      "Read-through cache for hot codes, including negative caching of unknown codes",
+      "Asynchronous click-event pipeline that batches events into aggregated counts",
+      "Background job that expires/purges links and invalidates cached entries"
+    ],
+    "deepDiveTopics": [
+      "Code generation: base62 counter with per-node range allocation vs random 7-char codes with conditional insert vs hashing the URL; collisions and non-enumerability (e.g. scrambling the counter)",
+      "301 vs 302/307 redirects: browser caching vs accurate click counts and the ability to disable links later",
+      "Caching hot links: sizing (e.g. top 20% of daily codes), TTLs, invalidation on disable/delete/expiry, a single viral key",
+      "Counting clicks without slowing redirects: fire-and-forget events, batching, approximate vs exact counts",
+      "Partitioning and replicating ~6B mappings; why the access pattern is a pure key lookup"
+    ],
+    "commonPitfalls": [
+      "Truncating an MD5/SHA hash of the URL to 7 characters without handling collisions",
+      "A single auto-increment database counter: a bottleneck, a single point of failure and trivially enumerable codes",
+      "Writing click counts to the database synchronously on every redirect",
+      "Choosing permanent (301) redirects while promising accurate stats and the ability to disable links",
+      "Skipping estimates, so storage and cache sizes are never justified",
+      "Checking a custom alias with read-then-write instead of an atomic conditional insert"
+    ]
+  }
+}
